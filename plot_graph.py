@@ -8,7 +8,8 @@ def save_graph():
     # env_name = 'CartPole-v1'
     # env_name = 'LunarLander-v2'
     # env_name = 'BipedalWalker-v2'
-    env_name = 'RoboschoolWalker2d-v1'
+    # env_name = 'RoboschoolWalker2d-v1'
+    env_name = 'UAVnavigation'
 
     fig_num = 0     #### change this to prevent overwriting figures in same env_name folder
     plot_avg = True    # plot average of all runs; else plot all runs separately
@@ -48,7 +49,7 @@ def save_graph():
 
     all_runs = []
 
-    for run_num in range(num_runs):
+    for run_num in range(14, 15):
 
         log_f_name = log_dir + '/PPO_' + env_name + "_log_" + str(run_num) + ".csv"
         print("loading data from : " + log_f_name)
@@ -65,6 +66,7 @@ def save_graph():
     if plot_avg:
         # average all runs
         df_concat = pd.concat(all_runs)
+        df_concat = df_concat.drop(df_concat.index[0])
         df_concat_groupby = df_concat.groupby(df_concat.index)
         data_avg = df_concat_groupby.mean()
 

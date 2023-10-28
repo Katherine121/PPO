@@ -47,8 +47,9 @@ def test():
     eps_clip = 0.2              # clip parameter for PPO
     gamma = 0.99                # discount factor
 
-    lr_actor = 0.0003           # learning rate for actor
+    lr_actor = 0.001           # learning rate for actor
     lr_critic = 0.001           # learning rate for critic
+    wd = 0.1
 
     #####################################################
 
@@ -64,7 +65,7 @@ def test():
         action_dim = env.action_space.n
 
     # initialize a PPO agent
-    ppo_agent = PPO(state_dim, action_dim, lr_actor, lr_critic, gamma, K_epochs, eps_clip, has_continuous_action_space, action_std)
+    ppo_agent = PPO(state_dim, action_dim, lr_actor, wd, gamma, K_epochs, eps_clip, has_continuous_action_space, action_std)
 
     # preTrained weights directory
 
