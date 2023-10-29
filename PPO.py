@@ -1,3 +1,4 @@
+import numpy as np
 import torch
 import torch.nn as nn
 import torchvision
@@ -29,7 +30,6 @@ class RolloutBuffer:
         self.rewards = []
         self.state_values = []
         self.is_terminals = []
-        # self.max_size = 8000
 
     def clear(self):
         del self.actions[:]
@@ -38,15 +38,6 @@ class RolloutBuffer:
         del self.rewards[:]
         del self.state_values[:]
         del self.is_terminals[:]
-
-    # def check(self):
-    #     if len(self.actions) > self.max_size:
-    #         self.actions.pop(0)
-    #         self.states.pop(0)
-    #         self.logprobs.pop(0)
-    #         self.rewards.pop(0)
-    #         self.state_values.pop(0)
-    #         self.is_terminals.pop(0)
 
 
 class ActorCritic(nn.Module):
@@ -59,62 +50,89 @@ class ActorCritic(nn.Module):
             self.action_dim = action_dim
             # 用init*init填充形状为(action_dim,)的tensor
             self.action_var = torch.full((action_dim,), action_std_init * action_std_init).to(device)
-        # actor
-        backbone = torchvision.models.mobilenet_v3_small(weights=(MobileNet_V3_Small_Weights.IMAGENET1K_V1))
-        if has_continuous_action_space:
-            self.actor = ARTransformer(
-                        backbone=backbone,
-                        backbone_pretrained="PPO_preTrained/mobilenet_pretrain.pth.tar",
-                        extractor_dim=576,
-                        action_dim=action_dim,
-                        len=6,
-                        dim=512,
-                        depth=4,
-                        heads=8,
-                        dim_head=64,
-                        mlp_dim=1024,
-                        dropout=0.1,
-                        emb_dropout=0.1,
-                        is_actor=True
-                    )
-            self.actor = self.actor.cuda()
-            for name, param in self.actor.named_parameters():
-                if param.requires_grad:
-                    print(name)
-        else:
-            self.actor = ARTransformer(
-                        backbone=backbone,
-                        backbone_pretrained="PPO_preTrained/mobilenet_pretrain.pth.tar",
-                        extractor_dim=576,
-                        action_dim=action_dim,
-                        len=6,
-                        dim=512,
-                        depth=4,
-                        heads=8,
-                        dim_head=64,
-                        mlp_dim=1024,
-                        dropout=0.1,
-                        emb_dropout=0.1,
-                        is_actor=True
-                    )
-            self.actor = self.actor.cuda()
-        # critic
-        self.critic = ARTransformer(
-                        backbone=backbone,
-                        backbone_pretrained="PPO_preTrained/mobilenet_pretrain.pth.tar",
-                        extractor_dim=576,
-                        action_dim=action_dim,
-                        len=6,
-                        dim=512,
-                        depth=4,
-                        heads=8,
-                        dim_head=64,
-                        mlp_dim=1024,
-                        dropout=0.1,
-                        emb_dropout=0.1,
-                        is_actor=False
-                    )
-        self.critic = self.critic.cuda()
+        # # actor
+        # backbone = torchvision.models.mobilenet_v3_small(weights=(MobileNet_V3_Small_Weights.IMAGENET1K_V1))
+        # if has_continuous_action_space:
+        #     self.actor = ARTransformer(
+        #                 backbone=backbone,
+        #                 backbone_pretrained="PPO_preTrained/mobilenet_pretrain.pth.tar",
+        #                 extractor_dim=576,
+        #                 action_dim=action_dim,
+        #                 len=6,
+        #                 dim=512,
+        #                 depth=4,
+        #                 heads=8,
+        #                 dim_head=64,
+        #                 mlp_dim=1024,
+        #                 dropout=0.1,
+        #                 emb_dropout=0.1,
+        #                 is_actor=True
+        #             )
+        #     self.actor = self.actor.cuda()
+        #     for name, param in self.actor.named_parameters():
+        #         if param.requires_grad:
+        #             print(name)
+        # else:
+        #     self.actor = ARTransformer(
+        #                 backbone=backbone,
+        #                 backbone_pretrained="PPO_preTrained/mobilenet_pretrain.pth.tar",
+        #                 extractor_dim=576,
+        #                 action_dim=action_dim,
+        #                 len=6,
+        #                 dim=512,
+        #                 depth=4,
+        #                 heads=8,
+        #                 dim_head=64,
+        #                 mlp_dim=1024,
+        #                 dropout=0.1,
+        #                 emb_dropout=0.1,
+        #                 is_actor=True
+        #             )
+        #     self.actor = self.actor.cuda()
+        # # critic
+        # self.critic = ARTransformer(
+        #                 backbone=backbone,
+        #                 backbone_pretrained="PPO_preTrained/mobilenet_pretrain.pth.tar",
+        #                 extractor_dim=576,
+        #                 action_dim=action_dim,
+        #                 len=6,
+        #                 dim=512,
+        #                 depth=4,
+        #                 heads=8,
+        #                 dim_head=64,
+        #                 mlp_dim=1024,
+        #                 dropout=0.1,
+        #                 emb_dropout=0.1,
+        #                 is_actor=False
+        #             )
+        # self.critic = self.critic.cuda()
+            # actor
+            if has_continuous_action_space:
+                self.actor = nn.Sequential(
+                    nn.Linear(state_dim, 64),
+                    nn.Tanh(),
+                    nn.Linear(64, 64),
+                    nn.Tanh(),
+                    nn.Linear(64, action_dim),
+                    nn.Tanh()
+                )
+            else:
+                self.actor = nn.Sequential(
+                    nn.Linear(state_dim, 64),
+                    nn.Tanh(),
+                    nn.Linear(64, 64),
+                    nn.Tanh(),
+                    nn.Linear(64, action_dim),
+                    nn.Softmax(dim=-1)
+                )
+            # critic
+            self.critic = nn.Sequential(
+                nn.Linear(state_dim, 64),
+                nn.Tanh(),
+                nn.Linear(64, 64),
+                nn.Tanh(),
+                nn.Linear(64, 1),
+            )
 
     def set_action_std(self, new_action_std):
         if self.has_continuous_action_space:
@@ -129,17 +147,17 @@ class ActorCritic(nn.Module):
 
     # old policy
     def act(self, state):
-
+        input = normalization(state)
         if self.has_continuous_action_space:
             # 输入状态，经过神经网络，输出动作（连续值）
-            action_mean = self.actor(state)
+            action_mean = self.actor(input)
             # 取self.action_var的对角线元素
             cov_mat = torch.diag(self.action_var).unsqueeze(dim=0)
             # 输入：分布的平均值、正定协方差矩阵
             # 输出：由均值向量和协方差矩阵参数化的多元正态(也称为高斯)分布
             dist = MultivariateNormal(action_mean, cov_mat)
         else:
-            action_probs = self.actor(state)
+            action_probs = self.actor(input)
             dist = Categorical(action_probs)
 
         # 离散动作：根据概率进行采样
@@ -147,15 +165,15 @@ class ActorCritic(nn.Module):
         action = dist.sample()
         action_logprob = dist.log_prob(action)
         # 输入状态，经过神经网络，输出奖励
-        state_val = self.critic(state)
+        state_val = self.critic(input)
 
         return action.detach(), action_logprob.detach(), state_val.detach()
 
     # new policy
     def evaluate(self, state, action):
-
+        input = normalization(state)
         if self.has_continuous_action_space:
-            action_mean = self.actor(state)
+            action_mean = self.actor(input)
 
             # 将self.action_var扩展到和action_mean一样的维度
             action_var = self.action_var.expand_as(action_mean)
@@ -168,17 +186,35 @@ class ActorCritic(nn.Module):
             if self.action_dim == 1:
                 action = action.reshape(-1, self.action_dim)
         else:
-            action_probs = self.actor(state)
+            action_probs = self.actor(input)
             dist = Categorical(action_probs)
         action_logprobs = dist.log_prob(action)
         dist_entropy = dist.entropy()
-        state_values = self.critic(state)
+        state_values = self.critic(input)
 
         return action_logprobs, state_values, dist_entropy
 
 
+def normalization(state):
+    data = state.clone().detach()
+    if len(data.shape) == 1:
+        data[0] -= 23.55
+        data[1] -= 120.3
+        data[2] -= 23.55
+        data[3] -= 120.3
+    elif len(data.shape) == 2:
+        data[:, 0] -= 23.55
+        data[:, 1] -= 120.3
+        data[:, 2] -= 23.55
+        data[:, 3] -= 120.3
+    mean = torch.mean(data, dim=-1, keepdim=True)
+    std = torch.std(data, dim=-1, keepdim=True)
+    normData = (data - mean)/std
+    return normData
+
+
 class PPO:
-    def __init__(self, state_dim, action_dim, lr_actor, wd, gamma, K_epochs, batch_size, eps_clip,
+    def __init__(self, state_dim, action_dim, lr_actor, lr_critic, wd, gamma, K_epochs, eps_clip,
                  has_continuous_action_space, action_std_init=0.6):
 
         self.has_continuous_action_space = has_continuous_action_space
@@ -189,19 +225,14 @@ class PPO:
         self.gamma = gamma
         self.eps_clip = eps_clip
         self.K_epochs = K_epochs
-        self.batch_size = batch_size
 
         self.buffer = RolloutBuffer()
 
         self.policy = ActorCritic(state_dim, action_dim, has_continuous_action_space, action_std_init).to(device)
-        # self.optimizer = torch.optim.Adam([
-        #     {'params': self.policy.actor.parameters(), 'lr': lr_actor},
-        #     {'params': self.policy.critic.parameters(), 'lr': lr_critic}
-        # ])
-        parameters = list(filter(lambda p: p.requires_grad, self.policy.actor.parameters())) + \
-                     list(filter(lambda p: p.requires_grad, self.policy.critic.parameters()))
-        self.optimizer = torch.optim.Adam(parameters, lr=lr_actor, weight_decay=wd)
-        # self.lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(self.optimizer, T_0=10, T_mult=2)
+        self.optimizer = torch.optim.Adam([
+            {'params': self.policy.actor.parameters(), 'lr': lr_actor},
+            {'params': self.policy.critic.parameters(), 'lr': lr_critic}
+        ])
 
         self.policy_old = ActorCritic(state_dim, action_dim, has_continuous_action_space, action_std_init).to(device)
         self.policy_old.load_state_dict(self.policy.state_dict())
@@ -238,8 +269,7 @@ class PPO:
 
         if self.has_continuous_action_space:
             with torch.no_grad():
-                # state = torch.FloatTensor(state).to(device)
-                state = [state[0].to(dtype=torch.float32).to(device), state[1].to(dtype=torch.float32).to(device)]
+                state = torch.FloatTensor(state).to(device)
                 action, action_logprob, state_val = self.policy_old.act(state)
 
             self.buffer.states.append(state)
@@ -264,12 +294,10 @@ class PPO:
         # Monte Carlo estimate of returns
         rewards = []
         discounted_reward = 0
-        # read reward as timestamp decreasing
         for reward, is_terminal in zip(reversed(self.buffer.rewards), reversed(self.buffer.is_terminals)):
             if is_terminal:
                 discounted_reward = 0
             discounted_reward = reward + (self.gamma * discounted_reward)
-            # store reward: ri + λ*A(i+1) as timestamp increasing
             rewards.insert(0, discounted_reward)
 
         # Normalizing the rewards
@@ -277,95 +305,38 @@ class PPO:
         rewards = (rewards - rewards.mean()) / (rewards.std() + 1e-7)
 
         # convert list to tensor
-        # state, action, logprobs, state_vals都是old policy的输入输出
-        old_states = self.buffer.states
+        old_states = torch.squeeze(torch.stack(self.buffer.states, dim=0)).detach().to(device)
         old_actions = torch.squeeze(torch.stack(self.buffer.actions, dim=0)).detach().to(device)
         old_logprobs = torch.squeeze(torch.stack(self.buffer.logprobs, dim=0)).detach().to(device)
         old_state_values = torch.squeeze(torch.stack(self.buffer.state_values, dim=0)).detach().to(device)
 
         # calculate advantages
-        # 环境给出的奖励 - old policy神经网络输出的奖励
-        # print(rewards.size())
-        # print(old_state_values.size())
         advantages = rewards.detach() - old_state_values.detach()
-        # advantages = rewards.detach()
 
         # Optimize policy for K epochs
-        # old policy sample enough trajectories, and policy updates for K epochs
-        for epoch_i in range(self.K_epochs):
-            if epoch_i % 5 == 0:
-                print("Epoch: " + str(epoch_i))
+        for _ in range(self.K_epochs):
             # Evaluating old actions and values
-            # policy input sampled states and output state_vals
+            logprobs, state_values, dist_entropy = self.policy.evaluate(old_states, old_actions)
 
-            size = len(self.buffer.actions)
-            for i in range(0, len(self.buffer.rewards) // self.batch_size):
-                start = size - self.batch_size * (i + 1)
-                end = size - self.batch_size * i
-                # batch_size个[img, ang]组成的list
-                img = [x[0] for x in old_states[start: end]]
-                ang = [x[1] for x in old_states[start: end]]
-                # batch_size个img组成的tensor
-                img = torch.squeeze(torch.stack(img, dim=0)).detach().to(device)
-                ang = torch.squeeze(torch.stack(ang, dim=0)).detach().to(device)
-                logprobs, state_values, dist_entropy =\
-                    self.policy.evaluate([img, ang], old_actions[start: end])
+            # match state_values tensor dimensions with rewards tensor
+            state_values = torch.squeeze(state_values)
 
-                # match state_values tensor dimensions with rewards tensor
-                state_values = torch.squeeze(state_values)
+            # Finding the ratio (pi_theta / pi_theta__old)
+            ratios = torch.exp(logprobs - old_logprobs.detach())
 
-                # Finding the ratio (pi_theta / pi_theta__old)
-                # e^(logp - logq) = e^(log(p/q)) = p/q
-                ratios = torch.exp(logprobs - old_logprobs[start: end].detach())
+            # Finding Surrogate Loss
+            surr1 = ratios * advantages
+            surr2 = torch.clamp(ratios, 1 - self.eps_clip, 1 + self.eps_clip) * advantages
 
-                # Finding Surrogate Loss
-                surr1 = ratios * advantages[start: end]
-                surr2 = torch.clamp(ratios, 1 - self.eps_clip, 1 + self.eps_clip) * advantages[start: end]
+            # # final loss of clipped objective PPO
+            loss = -torch.min(surr1, surr2) + 0.5 * self.MseLoss(state_values, rewards) - 0.01 * dist_entropy
 
-                # final loss of clipped objective PPO
-                loss = -torch.min(surr1, surr2) + 0.5 * self.MseLoss(state_values, rewards[start: end]) \
-                       - 0.01 * dist_entropy
-                # loss = -torch.min(surr1, surr2)
-
-                # take gradient step
-                self.optimizer.zero_grad()
-                loss.mean().backward()
-                self.optimizer.step()
-                # self.lr_scheduler.step()
-
-            if size - self.batch_size * i > 0:
-                start = 0
-                end = size - self.batch_size * i
-                # batch_size个[img, ang]组成的list
-                img = [x[0] for x in old_states[start: end]]
-                ang = [x[1] for x in old_states[start: end]]
-                # batch_size个img组成的tensor
-                img = torch.squeeze(torch.stack(img, dim=0)).detach().to(device)
-                ang = torch.squeeze(torch.stack(ang, dim=0)).detach().to(device)
-                logprobs, state_values, dist_entropy = \
-                    self.policy.evaluate([img, ang], old_actions[start: end])
-
-                # match state_values tensor dimensions with rewards tensor
-                state_values = torch.squeeze(state_values)
-
-                # Finding the ratio (pi_theta / pi_theta__old)
-                # e^(logp - logq) = e^(log(p/q)) = p/q
-                ratios = torch.exp(logprobs - old_logprobs[start: end].detach())
-
-                # Finding Surrogate Loss
-                surr1 = ratios * advantages[start: end]
-                surr2 = torch.clamp(ratios, 1 - self.eps_clip, 1 + self.eps_clip) * advantages[start: end]
-
-                # final loss of clipped objective PPO
-                loss = -torch.min(surr1, surr2) + 0.5 * self.MseLoss(state_values, rewards[start: end]) \
-                       - 0.01 * dist_entropy
-                # loss = -torch.min(surr1, surr2)
-
-                # take gradient step
-                self.optimizer.zero_grad()
-                loss.mean().backward()
-                self.optimizer.step()
-                # self.lr_scheduler.step()
+            # take gradient step
+            self.optimizer.zero_grad()
+            loss.mean().backward()
+            self.optimizer.step()
+        # with open("loss.txt", "a") as file1:
+        #     file1.write(str(loss.mean()) + "\n")
 
         # Copy new weights into old policy
         self.policy_old.load_state_dict(self.policy.state_dict())

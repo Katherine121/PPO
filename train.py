@@ -17,12 +17,12 @@ def train():
 
     has_continuous_action_space = True  # continuous action space; else discrete
 
-    max_ep_len = 300  # max timesteps in one episode
-    max_training_timesteps = int(4e6)  # break training loop if timeteps > max_training_timesteps
+    max_ep_len = 64  # max timesteps in one episode
+    max_training_timesteps = int(3e6)  # break training loop if timeteps > max_training_timesteps
 
-    print_freq = max_ep_len * 10  # print avg reward in the interval (in num timesteps)
-    log_freq = max_ep_len * 10  # log avg reward in the interval (in num timesteps)
-    save_model_freq = max_ep_len * 80  # save model frequency (in num timesteps)
+    print_freq = max_ep_len * 100  # print avg reward in the interval (in num timesteps)
+    log_freq = max_ep_len * 100  # log avg reward in the interval (in num timesteps)
+    save_model_freq = max_ep_len * 500  # save model frequency (in num timesteps)
 
     action_std = 0.6  # starting std for action distribution (Multivariate Normal)
     action_std_decay_rate = 0.05  # linearly decay action_std (action_std = action_std - action_std_decay_rate)
@@ -34,25 +34,25 @@ def train():
 
     ################ PPO hyperparameters ################
     # 4 episode, update 1 policy
-    update_timestep = max_ep_len * 40  # update policy every n timesteps
-    K_epochs = 60  # update policy for K epochs in one PPO update
-    batch_size = 32
+    update_timestep = max_ep_len * 100  # update policy every n timesteps
+    K_epochs = 30  # update policy for K epochs in one PPO update
+    # batch_size = 32
 
     eps_clip = 0.2  # clip parameter for PPO
     gamma = 0.99  # discount factor
     # gamma = 0
 
-    lr_actor = 0.001  # learning rate for actor network
+    lr_actor = 0.0003  # learning rate for actor network
     lr_critic = 0.001  # learning rate for critic network
     wd = 0.1
 
-    random_seed = 10  # set random seed if required (0 = no random seed)
+    random_seed = 0  # set random seed if required (0 = no random seed)
     #####################################################
 
     print("training environment name : " + env_name)
 
-    env = MyUAVgym(len=6, bigmap_dir="../../../mnt/nfs/wyx/bigmap", num_nodes=10, dis=50,
-                   done_thresh=50, max_step_num=max_ep_len)
+    env = MyUAVgym(len=6, bigmap_dir="../../../mnt/nfs/wyx/bigmap", num_nodes=10, dis=250,
+                   done_thresh=125, max_step_num=max_ep_len)
 
     # state space dimension
     state_dim = env.observation_space.shape[0]
@@ -75,12 +75,15 @@ def train():
         os.makedirs(log_dir)
 
     #### get number of log files in log directory
-    run_num = 0
     current_num_files = next(os.walk(log_dir))[2]
     run_num = len(current_num_files)
 
     #### create new log file for each run
     log_f_name = log_dir + '/PPO_' + env_name + "_log_" + str(run_num) + ".csv"
+    #### create new log file for each run
+    diff_f_name = log_dir + '/PPO_' + env_name + "_diff_" + str(run_num) + ".csv"
+    #### create new log file for each run
+    acc_f_name = log_dir + '/PPO_' + env_name + "_acc_" + str(run_num) + ".csv"
 
     print("current logging run number for " + env_name + " : ", run_num)
     print("logging at : " + log_f_name)
@@ -124,7 +127,7 @@ def train():
     print("--------------------------------------------------------------------------------------------")
     print("PPO update frequency : " + str(update_timestep) + " timesteps")
     print("PPO K epochs : ", K_epochs)
-    print("update batch size : ", batch_size)
+    # print("update batch size : ", batch_size)
     print("PPO epsilon clip : ", eps_clip)
     print("discount factor (gamma) : ", gamma)
     print("--------------------------------------------------------------------------------------------")
@@ -143,7 +146,7 @@ def train():
     ################# training procedure ################
 
     # initialize a PPO agent
-    ppo_agent = PPO(state_dim, action_dim, lr_actor, wd, gamma, K_epochs, batch_size,
+    ppo_agent = PPO(state_dim, action_dim, lr_actor, lr_critic, wd, gamma, K_epochs,
                     eps_clip, has_continuous_action_space, action_std)
 
     # track total training time
@@ -158,6 +161,12 @@ def train():
     # logging file
     log_f = open(log_f_name, "w+")
     log_f.write('episode,timestep,reward\n')
+    # logging file
+    diff_f = open(diff_f_name, "w+")
+    diff_f.write('episode,timestep,diff\n')
+    # logging file
+    acc_f = open(acc_f_name, "w+")
+    acc_f.write('episode,timestep,acc\n')
 
     # printing and logging variables
     print_running_reward = 0
@@ -165,6 +174,9 @@ def train():
 
     log_running_reward = 0
     log_running_episodes = 0
+
+    total_success_num = 0
+    total_success_diff = 0
 
     time_step = 0
     i_episode = 0
@@ -177,56 +189,68 @@ def train():
 
         for t in range(1, max_ep_len + 1):
 
-            # select action with old policy
+            # select action with policy
             action = ppo_agent.select_action(state)
-            state, reward, done, _ = env.step(action)
+            state, reward, done, _, success, success_diff = env.step(action)
+            total_success_num += success
+            if success == 1:
+                total_success_diff += success_diff
 
-            # saving reward and is_terminals as timestamp increasing
+            # saving reward and is_terminals
             ppo_agent.buffer.rewards.append(reward)
             ppo_agent.buffer.is_terminals.append(done)
-            # ppo_agent.buffer.check()
 
             time_step += 1
             current_ep_reward += reward
 
+            # update PPO agent
+            if time_step % update_timestep == 0:
+                ppo_agent.update()
+
+                if total_success_num > 0:
+                    print("total success num is: " + str(total_success_num / print_running_episodes))
+                    acc_f.write('{},{},{}\n'.format(i_episode, time_step, total_success_num / print_running_episodes))
+                    acc_f.flush()
+
+                    print("total success diff is: " + str(total_success_diff / total_success_num))
+                    diff_f.write('{},{},{}\n'.format(i_episode, time_step, total_success_diff / total_success_num))
+                    diff_f.flush()
+                else:
+                    print("total success num is: " + str(total_success_num))
+                    acc_f.write('{},{},{}\n'.format(i_episode, time_step, total_success_num))
+                    acc_f.flush()
+
+                    print("total success diff is: " + str(total_success_diff))
+                    diff_f.write('{},{},{}\n'.format(i_episode, time_step, total_success_diff))
+                    diff_f.flush()
+                total_success_num = 0
+                total_success_diff = 0
+
+            # if continuous action space; then decay action std of ouput action distribution
+            if has_continuous_action_space and time_step % action_std_decay_freq == 0:
+                ppo_agent.decay_action_std(action_std_decay_rate, min_action_std)
+
             # log in logging file
             if time_step % log_freq == 0:
-                if log_running_episodes == 0:
-                    log_avg_reward = 0
-                else:
-                    # log average reward till last episode
-                    log_avg_reward = log_running_reward / log_running_episodes
-                    log_avg_reward = round(log_avg_reward, 4)
+                # log average reward till last episode
+                log_avg_reward = log_running_reward / log_running_episodes
+                log_avg_reward = round(log_avg_reward, 4)
 
                 log_f.write('{},{},{}\n'.format(i_episode, time_step, log_avg_reward))
                 log_f.flush()
-
                 log_running_reward = 0
                 log_running_episodes = 0
 
             # printing average reward
             if time_step % print_freq == 0:
-                if print_running_episodes == 0:
-                    print_avg_reward = 0
-                else:
-                    # print average reward till last episode
-                    print_avg_reward = print_running_reward / print_running_episodes
-                    print_avg_reward = round(print_avg_reward, 2)
+                # print average reward till last episode
+                print_avg_reward = print_running_reward / print_running_episodes
+                print_avg_reward = round(print_avg_reward, 2)
 
                 print("Episode : {} \t\t Timestep : {} \t\t Average Reward : {}".format(i_episode, time_step,
                                                                                         print_avg_reward))
-
                 print_running_reward = 0
                 print_running_episodes = 0
-
-            # update PPO agent
-            if time_step % update_timestep == 0:
-                print("updating...")
-                ppo_agent.update()
-
-            # if continuous action space; then decay action std of ouput action distribution
-            if has_continuous_action_space and time_step % action_std_decay_freq == 0:
-                ppo_agent.decay_action_std(action_std_decay_rate, min_action_std)
 
             # save model weights
             if time_step % save_model_freq == 0:

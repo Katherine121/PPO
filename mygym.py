@@ -127,7 +127,7 @@ def screenshot(paths, labels, new_lat, new_lon, cur_height, img_aug):
 class MyUAVgym(gym.Env):
     def __init__(self, len, bigmap_dir, num_nodes, dis, done_thresh, max_step_num):
         self.action_space = spaces.Box(low=-1.0, high=+1.0, shape=(2,), dtype=np.float32)
-        self.observation_space = spaces.Box(low=-1.0, high=+1.0, shape=(2, 3, 224, 224), dtype=np.float32)
+        self.observation_space = spaces.Box(low=-1.0, high=+1.0, shape=(4,), dtype=np.float32)
         self.start_pos = []
         self.end_pos = []
         self.cur_pos = []
@@ -135,6 +135,7 @@ class MyUAVgym(gym.Env):
         self.end_pic = None
         self.cur_pic = None
         self.last_diff = 0
+        self.init_diff = 0
         self.next_angles = []
         self.len = len
 
@@ -205,11 +206,19 @@ class MyUAVgym(gym.Env):
         # add a batch dimension
         return next_imgs.unsqueeze(dim=0), next_angles.unsqueeze(dim=0)
 
+    def get_pos_input(self):
+        state = self.cur_pos[:]
+        state.extend(self.end_pos)
+        return state
+
     def reset(self):
-        # p = random.randint(a=0, b=self.num_nodes - 2)
-        # q = random.randint(a=p + 1, b=self.num_nodes - 1)
-        p = 0
-        q = 1
+        p = random.randint(a=0, b=self.num_nodes - 1)
+        q = random.randint(a=0, b=self.num_nodes - 1)
+        while p == q:
+            p = random.randint(a=0, b=self.num_nodes - 1)
+            q = random.randint(a=0, b=self.num_nodes - 1)
+        # p = 0
+        # q = 1
         self.start_pos = list(self.points[p])
         self.end_pos = list(self.points[q])
         self.cur_pos = self.start_pos
@@ -232,7 +241,7 @@ class MyUAVgym(gym.Env):
         lat_diff = (self.end_pos[0] - self.cur_pos[0]) * 111000
         lon_diff = (self.end_pos[1] - self.cur_pos[1]) * 111000 * math.cos(self.cur_pos[0] / 180 * math.pi)
         self.last_diff = math.sqrt(lat_diff * lat_diff + lon_diff * lon_diff)
-
+        self.init_diff = self.last_diff
         # print("start_pos:")
         # print(self.start_pos)
         # print("end_pos:")
@@ -240,17 +249,17 @@ class MyUAVgym(gym.Env):
         # print("height:")
         # print(self.cur_height)
         # screenshot the start point image
-        self.start_pic = screenshot(self.paths, self.labels, self.start_pos[0], self.start_pos[1],
-                                    self.cur_height, self.image_augment)
-        self.end_pic = screenshot(self.paths, self.labels, self.end_pos[0], self.end_pos[1],
-                                  self.cur_height, self.image_augment)
-        self.cur_pic = [self.start_pic]
+        # self.start_pic = screenshot(self.paths, self.labels, self.start_pos[0], self.start_pos[1],
+        #                             self.cur_height, self.image_augment)
+        # self.end_pic = screenshot(self.paths, self.labels, self.end_pos[0], self.end_pos[1],
+        #                           self.cur_height, self.image_augment)
+        # self.cur_pic = [self.start_pic]
 
-        self.next_angles = []
+        # self.next_angles = []
 
         self.step_num = 0
 
-        state = self.get_input()
+        state = self.get_pos_input()
         return state
 
     def step(self, action):
@@ -330,43 +339,58 @@ class MyUAVgym(gym.Env):
         # 根据下一步cur_pos, end计算reward
         # reward1 = -math.pow(min(1, diff / 3000), 2.8)
         # -1~+1
-        reward1 = -(diff - self.last_diff) / self.dis
+        reward1 = - (diff - self.last_diff) / self.dis
         self.last_diff = diff
         reward = reward1
         # 成功到达终点额外加100奖励
+        success = 0
+        success_diff = 0
         if diff <= self.done_thresh and self.step_num <= self.max_step_num - 1:
-            print("successfully arrived! in " + str(diff) + " m, by total_step_num: " + str(self.step_num))
-            print("origin end point pos:" + str(self.end_pos[0]) + "," + str(self.end_pos[1]))
-            print("actual end point pos:" + str(self.cur_pos[0]) + "," + str(self.cur_pos[1]))
-            reward = reward1 + 100
+            # print("successfully arrived! in " + str(diff) + " m, by total_step_num: "
+            #       + str(self.step_num) + " / " + str(self.last_diff // self.dis))
+            # print("origin end point pos:" + str(self.end_pos[0]) + "," + str(self.end_pos[1]))
+            # print("actual end point pos:" + str(self.cur_pos[0]) + "," + str(self.cur_pos[1]))
+            success = 1
+            success_diff = diff
+            reward = reward1 + 10
         # # 超时结束
         # elif self.step_num == self.max_step_num - 1:
         #     reward = reward1 - 100
 
         # 根据下一步cur_pos计算下一步state
-        new_img = screenshot(self.paths, self.labels, self.cur_pos[0], self.cur_pos[1],
-                             self.cur_height, self.image_augment)
-        if type(new_img) is list:
-            self.cur_pic.append(new_img[0])
-            self.next_angles.append(action.tolist())
-            if len(self.cur_pic) > self.len - 1:
-                assert len(self.cur_pic) == len(self.next_angles) + 1
-                self.cur_pic.pop(0)
-                self.next_angles.pop(0)
-            state = self.get_input()
-            return state, reward1 - 100, True, {}
+        # new_img = screenshot(self.paths, self.labels, self.cur_pos[0], self.cur_pos[1],
+        #                      self.cur_height, self.image_augment)
+        # if type(new_img) is list:
+        #     self.cur_pic.append(new_img[0])
+        #     self.next_angles.append(action.tolist())
+        #     if len(self.cur_pic) > self.len - 1:
+        #         assert len(self.cur_pic) == len(self.next_angles) + 1
+        #         self.cur_pic.pop(0)
+        #         self.next_angles.pop(0)
+        #     state = self.get_input()
+        #     return state, reward1 - 100, True, {}
+        # else:
+        #     self.cur_pic.append(new_img)
+        #     self.next_angles.append(action.tolist())
+        #     if len(self.cur_pic) > self.len - 1:
+        #         assert len(self.cur_pic) == len(self.next_angles) + 1
+        #         self.cur_pic.pop(0)
+        #         self.next_angles.pop(0)
+        #     state = self.get_input()
+        # 左上角23.8, 120.2
+        # 右上角：23.8, 120.4
+        # 左下角：23.3, 120.2
+        # 右下角：23.3, 120.4
+        if self.cur_pos[0] < 23.3 or self.cur_pos[0] > 23.8 or \
+            self.cur_pos[1] < 120.2 or self.cur_pos[1] > 120.4:
+            state = self.get_pos_input()
+            return state, reward1 - 10, True, {}, success, success_diff
         else:
-            self.cur_pic.append(new_img)
-            self.next_angles.append(action.tolist())
-            if len(self.cur_pic) > self.len - 1:
-                assert len(self.cur_pic) == len(self.next_angles) + 1
-                self.cur_pic.pop(0)
-                self.next_angles.pop(0)
-            state = self.get_input()
+            state = self.get_pos_input()
 
         self.step_num += 1
         info = {}
-        return state, reward, done, info
+        return state, reward, done, info, success, success_diff
 
     def render(self, mode='human'):
         pass

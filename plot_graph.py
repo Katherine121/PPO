@@ -3,7 +3,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 
-def save_graph():
+def save_graph(run_num):
     print("============================================================================================")
     # env_name = 'CartPole-v1'
     # env_name = 'LunarLander-v2'
@@ -39,27 +39,22 @@ def save_graph():
     if not os.path.exists(figures_dir):
         os.makedirs(figures_dir)
 
-    fig_save_path = figures_dir + '/PPO_' + env_name + '_fig_' + str(fig_num) + '.png'
-
     # get number of log files in directory
     log_dir = "PPO_logs" + '/' + env_name + '/'
 
-    current_num_files = next(os.walk(log_dir))[2]
-    num_runs = len(current_num_files)
-
     all_runs = []
 
-    for run_num in range(14, 15):
+    fig_save_path = figures_dir + '/PPO_' + env_name + '_fig_' + str(run_num) + '.png'
 
-        log_f_name = log_dir + '/PPO_' + env_name + "_log_" + str(run_num) + ".csv"
-        print("loading data from : " + log_f_name)
-        data = pd.read_csv(log_f_name)
-        data = pd.DataFrame(data)
+    log_f_name = log_dir + '/PPO_' + env_name + "_log_" + str(run_num) + ".csv"
+    print("loading data from : " + log_f_name)
+    data = pd.read_csv(log_f_name)
+    data = pd.DataFrame(data)
 
-        print("data shape : ", data.shape)
+    print("data shape : ", data.shape)
 
-        all_runs.append(data)
-        print("--------------------------------------------------------------------------------------------")
+    all_runs.append(data)
+    print("--------------------------------------------------------------------------------------------")
 
     ax = plt.gca()
 
@@ -123,22 +118,5 @@ def save_graph():
 
 
 if __name__ == '__main__':
-
-    save_graph()
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
+    for index in range(0, 1):
+        save_graph(index)
