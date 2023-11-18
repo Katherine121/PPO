@@ -1,5 +1,8 @@
 import os
+import shutil
 from datetime import datetime
+from pathlib import Path
+
 import torch
 import numpy as np
 from torch.backends import cudnn
@@ -18,7 +21,7 @@ def train():
     has_continuous_action_space = True  # continuous action space; else discrete
 
     max_ep_len = 64  # max timesteps in one episode
-    max_training_timesteps = int(3e6)  # break training loop if timeteps > max_training_timesteps
+    max_training_timesteps = int(6e6)  # break training loop if timeteps > max_training_timesteps
 
     print_freq = max_ep_len * 100  # print avg reward in the interval (in num timesteps)
     log_freq = max_ep_len * 100  # log avg reward in the interval (in num timesteps)
@@ -36,7 +39,7 @@ def train():
     # 4 episode, update 1 policy
     update_timestep = max_ep_len * 100  # update policy every n timesteps
     K_epochs = 30  # update policy for K epochs in one PPO update
-    # batch_size = 32
+    batch_size = 128
 
     eps_clip = 0.2  # clip parameter for PPO
     gamma = 0.99  # discount factor
@@ -76,7 +79,7 @@ def train():
 
     #### get number of log files in log directory
     current_num_files = next(os.walk(log_dir))[2]
-    run_num = len(current_num_files)
+    run_num = 6
 
     #### create new log file for each run
     log_f_name = log_dir + '/PPO_' + env_name + "_log_" + str(run_num) + ".csv"
@@ -100,7 +103,8 @@ def train():
     if not os.path.exists(directory):
         os.makedirs(directory)
 
-    checkpoint_path = directory + "PPO_{}_{}_{}.pth".format(env_name, random_seed, run_num_pretrained)
+    checkpoint_path = directory + "PPO_{}_{}_{}.pth".format(env_name, random_seed, run_num)
+    best_path = directory + "PPO_{}_{}_{}_best.pth".format(env_name, random_seed, run_num)
     print("save checkpoint path : " + checkpoint_path)
     #####################################################
 
@@ -127,7 +131,7 @@ def train():
     print("--------------------------------------------------------------------------------------------")
     print("PPO update frequency : " + str(update_timestep) + " timesteps")
     print("PPO K epochs : ", K_epochs)
-    # print("update batch size : ", batch_size)
+    print("update batch size : ", batch_size)
     print("PPO epsilon clip : ", eps_clip)
     print("discount factor (gamma) : ", gamma)
     print("--------------------------------------------------------------------------------------------")
@@ -146,7 +150,7 @@ def train():
     ################# training procedure ################
 
     # initialize a PPO agent
-    ppo_agent = PPO(state_dim, action_dim, lr_actor, lr_critic, wd, gamma, K_epochs,
+    ppo_agent = PPO(state_dim, action_dim, lr_actor, lr_critic, batch_size, wd, gamma, K_epochs,
                     eps_clip, has_continuous_action_space, action_std)
 
     # track total training time
@@ -180,18 +184,28 @@ def train():
 
     time_step = 0
     i_episode = 0
+    best_acc = 0
+    complete_episode_num = 0
+    datasets_path = "datasets" + str(run_num)
+    if os.path.exists(datasets_path) is True:
+        del_file(datasets_path)
 
     # training loop
     while time_step <= max_training_timesteps:
+        if os.path.exists(datasets_path) is False:
+            os.mkdir(datasets_path)
+        episode_files_dir = datasets_path + "/" + str(complete_episode_num) + "/"
+        if os.path.exists(episode_files_dir) is False:
+            os.mkdir(episode_files_dir)
 
-        state = env.reset()
+        state, labels = env.reset(episode_files_dir)
         current_ep_reward = 0
 
-        for t in range(1, max_ep_len + 1):
+        for t in range(1, max_ep_len):
 
             # select action with policy
-            action = ppo_agent.select_action(state)
-            state, reward, done, _, success, success_diff = env.step(action)
+            action = ppo_agent.select_action(state, labels)
+            state, labels, reward, done, _, success, success_diff = env.step(action)
             total_success_num += success
             if success == 1:
                 total_success_diff += success_diff
@@ -202,64 +216,6 @@ def train():
 
             time_step += 1
             current_ep_reward += reward
-
-            # update PPO agent
-            if time_step % update_timestep == 0:
-                ppo_agent.update()
-
-                if total_success_num > 0:
-                    print("total success num is: " + str(total_success_num / print_running_episodes))
-                    acc_f.write('{},{},{}\n'.format(i_episode, time_step, total_success_num / print_running_episodes))
-                    acc_f.flush()
-
-                    print("total success diff is: " + str(total_success_diff / total_success_num))
-                    diff_f.write('{},{},{}\n'.format(i_episode, time_step, total_success_diff / total_success_num))
-                    diff_f.flush()
-                else:
-                    print("total success num is: " + str(total_success_num))
-                    acc_f.write('{},{},{}\n'.format(i_episode, time_step, total_success_num))
-                    acc_f.flush()
-
-                    print("total success diff is: " + str(total_success_diff))
-                    diff_f.write('{},{},{}\n'.format(i_episode, time_step, total_success_diff))
-                    diff_f.flush()
-                total_success_num = 0
-                total_success_diff = 0
-
-            # if continuous action space; then decay action std of ouput action distribution
-            if has_continuous_action_space and time_step % action_std_decay_freq == 0:
-                ppo_agent.decay_action_std(action_std_decay_rate, min_action_std)
-
-            # log in logging file
-            if time_step % log_freq == 0:
-                # log average reward till last episode
-                log_avg_reward = log_running_reward / log_running_episodes
-                log_avg_reward = round(log_avg_reward, 4)
-
-                log_f.write('{},{},{}\n'.format(i_episode, time_step, log_avg_reward))
-                log_f.flush()
-                log_running_reward = 0
-                log_running_episodes = 0
-
-            # printing average reward
-            if time_step % print_freq == 0:
-                # print average reward till last episode
-                print_avg_reward = print_running_reward / print_running_episodes
-                print_avg_reward = round(print_avg_reward, 2)
-
-                print("Episode : {} \t\t Timestep : {} \t\t Average Reward : {}".format(i_episode, time_step,
-                                                                                        print_avg_reward))
-                print_running_reward = 0
-                print_running_episodes = 0
-
-            # save model weights
-            if time_step % save_model_freq == 0:
-                print("--------------------------------------------------------------------------------------------")
-                print("saving model at : " + checkpoint_path)
-                ppo_agent.save(checkpoint_path)
-                print("model saved")
-                print("Elapsed Time  : ", datetime.now().replace(microsecond=0) - start_time)
-                print("--------------------------------------------------------------------------------------------")
 
             # break; if the episode is over
             if done:
@@ -272,6 +228,72 @@ def train():
         log_running_episodes += 1
 
         i_episode += 1
+        complete_episode_num += 1
+
+        # update PPO agent
+        if complete_episode_num % 100 == 0:
+
+            if total_success_num > 0:
+                print("total success num is: " + str(total_success_num / print_running_episodes))
+                acc_f.write('{},{},{}\n'.format(i_episode, time_step, total_success_num / print_running_episodes))
+                acc_f.flush()
+
+                print("total success diff is: " + str(total_success_diff / total_success_num))
+                diff_f.write('{},{},{}\n'.format(i_episode, time_step, total_success_diff / total_success_num))
+                diff_f.flush()
+
+                if total_success_num / print_running_episodes >= best_acc:
+                    best_acc = total_success_num / print_running_episodes
+                    print("------------------------------------------------------")
+                    print("saving best model at : " + best_path)
+                    ppo_agent.save(time_step, best_acc, best_path)
+                    print("model saved")
+                    print("------------------------------------------------------")
+            else:
+                print("total success num is: " + str(total_success_num))
+                acc_f.write('{},{},{}\n'.format(i_episode, time_step, total_success_num))
+                acc_f.flush()
+
+                print("total success diff is: " + str(total_success_diff))
+                diff_f.write('{},{},{}\n'.format(i_episode, time_step, total_success_diff))
+                diff_f.flush()
+            total_success_num = 0
+            total_success_diff = 0
+
+            # log average reward till last episode
+            log_avg_reward = log_running_reward / log_running_episodes
+            log_avg_reward = round(log_avg_reward, 4)
+
+            log_f.write('{},{},{}\n'.format(i_episode, time_step, log_avg_reward))
+            log_f.flush()
+            log_running_reward = 0
+            log_running_episodes = 0
+
+            # print average reward till last episode
+            print_avg_reward = print_running_reward / print_running_episodes
+            print_avg_reward = round(print_avg_reward, 2)
+
+            print("Episode : {} \t\t Timestep : {} \t\t Average Reward : {}".format(i_episode, time_step,
+                                                                                    print_avg_reward))
+            print_running_reward = 0
+            print_running_episodes = 0
+
+        # save model weights
+        if complete_episode_num % 500 == 0:
+            print("--------------------------------------------------------------------------------------------")
+            print("saving model at : " + checkpoint_path)
+            ppo_agent.save(time_step, -1, checkpoint_path)
+            print("model saved")
+            print("Elapsed Time  : ", datetime.now().replace(microsecond=0) - start_time)
+            print("--------------------------------------------------------------------------------------------")
+
+        if complete_episode_num % 100 == 0:
+            ppo_agent.update()
+            del_file(datasets_path)
+
+        # if continuous action space; then decay action std of ouput action distribution
+        if has_continuous_action_space and complete_episode_num % 1000 == 0:
+            ppo_agent.decay_action_std(action_std_decay_rate, min_action_std)
 
     log_f.close()
     env.close()
@@ -283,6 +305,19 @@ def train():
     print("Finished training at (GMT) : ", end_time)
     print("Total training time  : ", end_time - start_time)
     print("============================================================================================")
+
+
+def del_file(path):
+    if not os.listdir(path):
+        print('目录为空！')
+    else:
+        for i in os.listdir(path):
+            path_file = os.path.join(path, i)  # 取文件绝对路径
+            if os.path.isfile(path_file):
+                os.remove(path_file)
+            else:
+                del_file(path_file)
+                shutil.rmtree(path_file)
 
 
 if __name__ == '__main__':

@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
-  <component name="PublishConfigData" autoUpload="On explicit save action" serverName="wyx@10.82.68.204:18022 agent (23)" remoteFilesAllowedToDisappearOnAutoupload="false">
+  <component name="PublishConfigData" autoUpload="On explicit save action" serverName="wyx@10.82.68.204:18022 agent (25)" remoteFilesAllowedToDisappearOnAutoupload="false">
     <serverData>
       <paths name="151">
         <serverdata>
@@ -66,6 +66,13 @@
         </serverdata>
       </paths>
       <paths name="wyx@10.214.211.137:18022 agent (7)">
+        <serverdata>
+          <mappings>
+            <mapping deploy="/home/wyx/PPO" local="$PROJECT_DIR$" />
+          </mappings>
+        </serverdata>
+      </paths>
+      <paths name="wyx@10.214.211.151:18022 agent">
         <serverdata>
           <mappings>
             <mapping deploy="/home/wyx/PPO" local="$PROJECT_DIR$" />
@@ -178,6 +185,20 @@
         </serverdata>
       </paths>
       <paths name="wyx@10.82.68.204:18022 agent (23)">
+        <serverdata>
+          <mappings>
+            <mapping deploy="/home/wyx/PPO" local="$PROJECT_DIR$" />
+          </mappings>
+        </serverdata>
+      </paths>
+      <paths name="wyx@10.82.68.204:18022 agent (24)">
+        <serverdata>
+          <mappings>
+            <mapping deploy="/home/wyx/PPO" local="$PROJECT_DIR$" />
+          </mappings>
+        </serverdata>
+      </paths>
+      <paths name="wyx@10.82.68.204:18022 agent (25)">
         <serverdata>
           <mappings>
             <mapping deploy="/home/wyx/PPO" local="$PROJECT_DIR$" />

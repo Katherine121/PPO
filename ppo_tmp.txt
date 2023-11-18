@@ -9,7 +9,6 @@ from torch.distributions import Categorical
 from torchvision import transforms
 from torchvision.models import MobileNet_V3_Small_Weights, AlexNet
 
-from dataset import UAVdataset
 from model import ARTransformer
 from utils import UncertaintyLoss
 from vit import ViT, Actor, Critic
@@ -260,27 +259,27 @@ def transform_input(state):
     return new_state
 
 
-# def transform_path_tensor(state):
-#     normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
-#                                      std=[0.229, 0.224, 0.225])
-#     val_transform = transforms.Compose([
-#         transforms.ToTensor(),
-#         normalize,
-#     ])
-#     new_state = []
-#     for s in state:
-#         cur_img = Image.open(s[0])
-#         cur_img = cur_img.convert('RGB')
-#         cur_img = val_transform(cur_img)
-#         cur_img = cur_img.unsqueeze(dim=0)
-#         end_img = Image.open(s[1])
-#         end_img = end_img.convert('RGB')
-#         end_img = val_transform(end_img)
-#         end_img = end_img.unsqueeze(dim=0)
-#         new_s = torch.cat((cur_img, end_img), dim=0)
-#         new_state.append(new_s)
-#
-#     return new_state
+def transform_path_tensor(state):
+    normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                     std=[0.229, 0.224, 0.225])
+    val_transform = transforms.Compose([
+        transforms.ToTensor(),
+        normalize,
+    ])
+    new_state = []
+    for s in state:
+        cur_img = Image.open(s[0])
+        cur_img = cur_img.convert('RGB')
+        cur_img = val_transform(cur_img)
+        cur_img = cur_img.unsqueeze(dim=0)
+        end_img = Image.open(s[1])
+        end_img = end_img.convert('RGB')
+        end_img = val_transform(end_img)
+        end_img = end_img.unsqueeze(dim=0)
+        new_s = torch.cat((cur_img, end_img), dim=0)
+        new_state.append(new_s)
+
+    return new_state
 
 
 class PPO:
@@ -386,16 +385,7 @@ class PPO:
         # calculate advantages
         advantages = rewards.detach() - old_state_values.detach()
 
-        normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                         std=[0.229, 0.224, 0.225])
-        val_transform = transforms.Compose([
-            transforms.ToTensor(),
-            normalize,
-        ])
-        train_dataset = UAVdataset(train_list=self.buffer.states, transform=val_transform)
-        train_loader = torch.utils.data.DataLoader(
-            train_dataset, batch_size=self.batch_size, shuffle=False,
-            pin_memory=True, drop_last=False)
+        train_dataset = UAVdataset()
 
         # Optimize policy for K epochs
         for epoch_i in range(self.K_epochs):
@@ -421,10 +411,51 @@ class PPO:
             # loss.mean().backward()
             # self.optimizer.step()
             total_loss = 0
-            for i, old_states in enumerate(train_loader):
-                old_states = old_states.to(device).to(dtype=torch.float32)
-                start = i * self.batch_size
-                end = start + old_states.size(0)
+            size = len(self.buffer.actions)
+            for i in range(0, size // self.batch_size):
+                start = size - self.batch_size * (i + 1)
+                end = size - self.batch_size * i
+                old_states = transform_path_tensor(self.buffer.states[start: end])
+                old_states = torch.squeeze(torch.stack(old_states, dim=0)).detach().to(device)
+
+                logprobs, state_values, dist_entropy, actor_label, critic_label = \
+                    self.policy.evaluate(old_states, old_actions[start: end])
+
+                # match state_values tensor dimensions with rewards tensor
+                state_values = torch.squeeze(state_values)
+
+                # Finding the ratio (pi_theta / pi_theta__old)
+                # e^(logp - logq) = e^(log(p/q)) = p/q
+                ratios = torch.exp(logprobs - old_logprobs[start: end].detach())
+
+                # Finding Surrogate Loss
+                surr1 = ratios * advantages[start: end]
+                surr2 = torch.clamp(ratios, 1 - self.eps_clip, 1 + self.eps_clip) * advantages[start: end]
+
+                # final loss of clipped objective PPO
+                loss = -torch.min(surr1, surr2) + 0.5 * self.MseLoss(state_values, rewards[start: end]) \
+                       - 0.01 * dist_entropy
+
+                # criterion = nn.MSELoss().cuda()
+                # actor_loss = criterion(actor_label, old_labels[start: end])
+                # critic_loss = criterion(critic_label, old_labels[start: end])
+                #
+                # balance_criterion = UncertaintyLoss().cuda()
+                # loss = balance_criterion([loss1, actor_loss, critic_loss])
+
+                # take gradient step
+                self.optimizer.zero_grad()
+                loss.mean().backward()
+                self.optimizer.step()
+
+                total_loss += loss.mean().item()
+
+            if size - self.batch_size * i > 0:
+                start = 0
+                end = size - self.batch_size * i
+                old_states = transform_path_tensor(self.buffer.states[start: end])
+                old_states = torch.squeeze(torch.stack(old_states, dim=0)).detach().to(device)
+
                 logprobs, state_values, dist_entropy, actor_label, critic_label = \
                     self.policy.evaluate(old_states, old_actions[start: end])
 
@@ -487,9 +518,3 @@ class PPO:
     def load(self, checkpoint_path):
         self.policy_old.load_state_dict(torch.load(checkpoint_path, map_location=lambda storage, loc: storage))
         self.policy.load_state_dict(torch.load(checkpoint_path, map_location=lambda storage, loc: storage))
-
-
-if __name__ == '__main__':
-    policy = ActorCritic(None, 2, True, 0.6)
-    state_dict = torch.load("PPO_preTrained/UAVnavigation/PPO_UAVnavigation_0_5_best.pth")
-    print(state_dict)
