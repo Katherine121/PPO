@@ -1,5 +1,6 @@
 import os
 
+import numpy as np
 import torch
 from torch import nn
 from einops import rearrange, repeat
@@ -35,21 +36,8 @@ class FeatureEnhanceModule(nn.Module):
         """
         super(FeatureEnhanceModule, self).__init__()
         self.backbone = backbone
-        if pretrained:
-            if os.path.isfile(pretrained):
-                print("=> loading checkpoint '{}'".format(pretrained))
-                checkpoint = torch.load(pretrained, map_location="cpu")
-
-                state_dict = checkpoint['state_dict']
-                self.backbone.load_state_dict(state_dict, strict=False)
-
-                print("=> loaded pre-trained model '{}'".format(pretrained))
-            else:
-                print("=> no checkpoint found at '{}'".format(pretrained))
-
-        self.backbone.classifier = nn.Identity()
-        for name, param in self.backbone.named_parameters():
-            param.requires_grad = False
+        # for name, param in self.backbone.named_parameters():
+        #     print(param)
 
     def forward(self, x):
         """
@@ -190,11 +178,44 @@ class CrossAttentionModule(nn.Module):
         return x
 
 
+class RunningMeanStd:
+    # Dynamically calculate mean and std
+    def __init__(self, shape):  # shape:the dimension of input data
+        self.n = 0
+        self.mean = torch.zeros(shape).cuda()
+        self.S = torch.zeros(shape).cuda()
+        self.std = torch.sqrt(self.S)
+
+    def update(self, x):
+        self.n += 1
+        if self.n == 1:
+            self.mean = x
+            self.std = x
+        else:
+            old_mean = self.mean.clone()
+            self.mean = old_mean + (x - old_mean) / self.n
+            self.S = self.S + (x - old_mean) * (x - self.mean)
+            self.std = torch.sqrt(self.S / self.n)
+
+
+class Normalization:
+    def __init__(self, shape):
+        self.running_ms = RunningMeanStd(shape=shape)
+
+    def __call__(self, x, update=True):
+        # Whether to update the mean and std,during the evaluating,update=Flase
+        if update:
+            self.running_ms.update(x)
+        x = (x - self.running_ms.mean) / (self.running_ms.std + 1e-8)
+
+        return x
+
+
 class ARTransformer(nn.Module):
-    def __init__(self, *, backbone, backbone_pretrained, extractor_dim,
-                 action_dim, len,
-                 dim, depth, heads, dim_head, mlp_dim,
-                 dropout=0., emb_dropout=0., is_actor=True):
+    def __init__(self, *, backbone, backbone_pretrained=None, extractor_dim,
+                 action_dim=2, len=6,
+                 dim=512, depth=4, heads=8, dim_head=64, mlp_dim=1024,
+                 dropout=0.1, emb_dropout=0.1, is_actor=True):
         """
         ARTransformer
         :param backbone: backbone of Feature Enhance Module (MobileNetV3 small)
@@ -211,81 +232,112 @@ class ARTransformer(nn.Module):
         :param emb_dropout: dropout rate after position embedding
         """
         super().__init__()
-        self.extractor = FeatureEnhanceModule(backbone, backbone_pretrained)
-        self.extractor_dim = extractor_dim
-        self.dim = dim
-        self.len = len
-        self.action_dim = action_dim
+        self.extractor = backbone
+        self.extractor_dim = 2
+        self.norm = Normalization(shape=(2*self.extractor_dim,))
 
-        self.ang_linear = nn.Linear(self.action_dim, dim)
-        self.img_linear = nn.Linear(self.extractor_dim + dim, dim)
+        self.head_angle = nn.Sequential(
+            nn.Linear(2 * self.extractor_dim, 64),
+            nn.Tanh(),
+            nn.Linear(64, 64),
+            nn.Tanh(),
+            nn.Linear(64, action_dim),
+            nn.Tanh()
+        )
 
-        self.pos_embedding = nn.Parameter(torch.randn(1, self.len, dim))
-        self.dropout = nn.Dropout(emb_dropout)
-
-        self.transformer = CrossAttentionModule(dim, depth, heads, dim_head, mlp_dim, dropout)
-
-        if is_actor:
-            self.head_angle = nn.Sequential(
-                nn.LayerNorm(dim),
-                nn.Hardtanh(),
-                nn.Linear(dim, dim // 2),
-                nn.Hardtanh(),
-                nn.Linear(dim // 2, action_dim),
-                # nn.Hardtanh()
-            )
-        else:
-            self.head_angle = nn.Sequential(
-                nn.LayerNorm(dim),
-                nn.Hardtanh(),
-                nn.Linear(dim, dim // 2),
-                nn.Hardtanh(),
-                nn.Linear(dim // 2, 1),
-                # nn.Hardtanh()
-            )
-
-    def forward(self, state):
+    def forward(self, img):
         """
         forward pass of ARTransformer
         :param img: input frame sequence
         :param ang: input angle sequence
         :return: the current position preds, the next position preds, the direction angle preds
         """
-        img, ang = state
-        # b,1,len
-        src_mask1 = get_pad_mask(img[:, :, 0, 0, 0].view(-1, self.len), pad_idx=0)
-        # b,len,len
-        b = img.size(0)
-        src_mask = src_mask1 & get_subsequent_mask(img[:, :, 0, 0, 0].view(-1, self.len))
+        if len(img.shape) == 4:
+            img = self.extractor(img)
+            img = img.view(-1, 2 * self.extractor_dim)
+            pos = img
 
-        # b,len,3,224,224->b*len,3,224,224->b*len,576->b,len,576
-        img = self.extractor(img.view(-1, 3, 224, 224))
-        img = img.view(-1, self.len, self.extractor_dim)
+        else:
+            b = img.size(0)
+            # b,len,3,224,224->b*len,3,224,224->b*len,576->b,len,576
+            img = self.extractor(img.view(b * 2, 3, 224, 224))
+            img = img.view(b, 2 * self.extractor_dim)
+            pos = img
 
-        # b,len,2->b,len,dim
-        # for i in range(1, self.len):
-        #     ang[:, i, :] += ang[:, i - 1, :]
-        # ang1 = torch.zeros_like(ang)
-        # for i in range(1, self.len):
-        #     ang1[:, i - 1, :] = ang[:, 0: i, :].sum(dim=1)
-        ang = self.ang_linear(ang)
+        # img /= 100
+        # mean = torch.mean(img, dim=-1, keepdim=True)
+        # std = torch.std(img, dim=-1, keepdim=True)
+        # img = (img - mean) / std
 
-        # b,len,extractor_dim+dim->b,len,dim
-        img = torch.cat((img, ang), dim=-1)
-        img = self.img_linear(img)
-
-        img += self.pos_embedding
-        img = self.dropout(img)
-
-        img = self.transformer(img, src_mask)
-
-        # b,len,dim->b,dim
-        res = torch.ones(b, self.dim).to(img.device)
-        for i in range(0, b):
-            # len,dim
-            pic = img[i]
-            # dim
-            res[i] = pic[src_mask1[i].sum() - 1]
+        # mean = torch.mean(img, dim=-1, keepdim=True)
+        # std = torch.std(img, dim=-1, keepdim=True)
+        # img = (img - mean) / std
+        img = self.norm(img)
 
         # b,dim->b,2*dim->2,b,dim
-        return self.head_angle(res)
+        return self.head_angle(img)
+
+
+class Critic(nn.Module):
+    def __init__(self, *, backbone, backbone_pretrained=None, extractor_dim,
+                 action_dim=1, len=6,
+                 dim=512, depth=4, heads=8, dim_head=64, mlp_dim=1024,
+                 dropout=0.1, emb_dropout=0.1, is_actor=True):
+        """
+        ARTransformer
+        :param backbone: backbone of Feature Enhance Module (MobileNetV3 small)
+        :param extractor_dim: output dimension of Feature Enhance Module
+        :param num_classes1: output dimension of ARTransformer
+        :param num_classes2: output dimension of ARTransformer
+        :param len: input sequence length of ARTransformer
+        :param dim: input dimension of Cross Attention Module
+        :param depth: depth of Cross Attention Module
+        :param heads: the number of heads in Multi-Head Self Attention layer
+        :param dim_head: dimension of one head
+        :param mlp_dim: hidden dimension in FeedForward layer
+        :param dropout: dropout rate
+        :param emb_dropout: dropout rate after position embedding
+        """
+        super().__init__()
+        self.extractor1 = backbone
+        self.extractor_dim1 = 2
+        self.norm = Normalization(shape=(2*self.extractor_dim1,))
+
+        self.head_angle1 = nn.Sequential(
+            nn.Linear(2 * self.extractor_dim1, 64),
+            nn.Tanh(),
+            nn.Linear(64, 64),
+            nn.Tanh(),
+            nn.Linear(64, 1)
+        )
+
+    def forward(self, img):
+        """
+        forward pass of ARTransformer
+        :param img: input frame sequence
+        :param ang: input angle sequence
+        :return: the current position preds, the next position preds, the direction angle preds
+        """
+        if len(img.shape) == 4:
+            img = self.extractor1(img)
+            img = img.view(-1, 2 * self.extractor_dim1)
+            pos = img
+        else:
+            b = img.size(0)
+            # b,len,3,224,224->b*len,3,224,224->b*len,576->b,len,576
+            img = self.extractor1(img.view(b * 2, 3, 224, 224))
+            img = img.view(b, 2 * self.extractor_dim1)
+            pos = img
+
+        # img /= 100
+        # mean = torch.mean(img, dim=-1, keepdim=True)
+        # std = torch.std(img, dim=-1, keepdim=True)
+        # img = (img - mean) / std
+
+        # mean = torch.mean(img, dim=-1, keepdim=True)
+        # std = torch.std(img, dim=-1, keepdim=True)
+        # img = (img - mean) / std
+        img = self.norm(img)
+
+        # b,dim->b,2*dim->2,b,dim
+        return self.head_angle1(img)
