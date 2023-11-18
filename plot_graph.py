@@ -1,6 +1,7 @@
 import os
 import pandas as pd
 import matplotlib.pyplot as plt
+import torch
 
 
 def save_graph(run_num):
@@ -61,7 +62,7 @@ def save_graph(run_num):
     if plot_avg:
         # average all runs
         df_concat = pd.concat(all_runs)
-        df_concat = df_concat.drop(df_concat.index[0])
+        # df_concat = df_concat.drop(df_concat.index[0])
         df_concat_groupby = df_concat.groupby(df_concat.index)
         data_avg = df_concat_groupby.mean()
 
@@ -118,5 +119,10 @@ def save_graph(run_num):
 
 
 if __name__ == '__main__':
-    for index in range(0, 1):
-        save_graph(index)
+    save_graph(5)
+    # save_graph(6)
+
+    # save_graph(7)
+    # save_graph(8)
+    # save_graph(9)
+    # save_graph(10)

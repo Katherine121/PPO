@@ -468,3 +468,10 @@ class PPO:
     def load(self, checkpoint_path):
         self.policy_old.load_state_dict(torch.load(checkpoint_path, map_location=lambda storage, loc: storage))
         self.policy.load_state_dict(torch.load(checkpoint_path, map_location=lambda storage, loc: storage))
+
+
+if __name__ == '__main__':
+    state_dict = torch.load("PPO_preTrained/UAVnavigation/PPO_UAVnavigation_0_5_best.pth")
+    print(state_dict)
+    state_dict = torch.load("PPO_preTrained/UAVnavigation/PPO_UAVnavigation_0_6_best.pth")
+    print(state_dict)
