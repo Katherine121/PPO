@@ -14,7 +14,7 @@ from data_augment import ImageAugment
 
 def get_start_end(center_lat=23.4, center_lon=120.3,
                   num_nodes=10,
-                  radius=5000, ):
+                  radius=2000, ):
     points = []
     # 计算每个点之间的角度间隔
     angle_step = 2 * math.pi / num_nodes
@@ -160,58 +160,56 @@ class MyUAVgym(gym.Env):
         self.image_augment = None
         self.labels = None
 
-    def get_input(self):
-        normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                         std=[0.229, 0.224, 0.225])
-        val_transform = transforms.Compose([
-            transforms.Resize(256),
-            transforms.CenterCrop((256, 256)),
-            transforms.ToTensor(),
-            normalize,
-        ])
-
-        # slice to avoid modifying the original list
-        cur_pic = self.cur_pic[:]
-        next_angles = self.next_angles[:]
-
-        next_imgs = None
-
-        # original images and angles
-        for i in range(0, len(cur_pic)):
-            img = cur_pic[i]
-            # img = Image.open(img)
-            img = img.convert('RGB')
-            img = val_transform(img).unsqueeze(dim=0)
-            if next_imgs is None:
-                next_imgs = img
-            else:
-                next_imgs = torch.cat((next_imgs, img), dim=0)
-        next_angles.append([0, 0])
-
-        # append the end point frame as part of model input
-        # dest_img = Image.open(self.end_pic)
-        dest_img = self.end_pic.convert('RGB')
-        dest_img = val_transform(dest_img).unsqueeze(dim=0)
-        next_imgs = torch.cat((next_imgs, dest_img), dim=0)
-
-        dest_angle = [0, 0]
-        next_angles.append(dest_angle)
-        next_angles = torch.tensor(next_angles, dtype=torch.float)
-
-        # if there are not enough input frames
-        for i in range(0, self.len - 1 - len(cur_pic)):
-            next_imgs = torch.cat((next_imgs, torch.zeros((1, 3, 256, 256))), dim=0)
-            next_angles = torch.cat((next_angles, torch.zeros((1, 2))), dim=0)
-
-        # add a batch dimension
-        return next_imgs.unsqueeze(dim=0), next_angles.unsqueeze(dim=0)
+    # def get_input(self):
+    #     normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
+    #                                      std=[0.229, 0.224, 0.225])
+    #     val_transform = transforms.Compose([
+    #         transforms.Resize(256),
+    #         transforms.CenterCrop((256, 256)),
+    #         transforms.ToTensor(),
+    #         normalize,
+    #     ])
+    #
+    #     # slice to avoid modifying the original list
+    #     cur_pic = self.cur_pic[:]
+    #     next_angles = self.next_angles[:]
+    #
+    #     next_imgs = None
+    #
+    #     # original images and angles
+    #     for i in range(0, len(cur_pic)):
+    #         img = cur_pic[i]
+    #         # img = Image.open(img)
+    #         img = img.convert('RGB')
+    #         img = val_transform(img).unsqueeze(dim=0)
+    #         if next_imgs is None:
+    #             next_imgs = img
+    #         else:
+    #             next_imgs = torch.cat((next_imgs, img), dim=0)
+    #     next_angles.append([0, 0])
+    #
+    #     # append the end point frame as part of model input
+    #     # dest_img = Image.open(self.end_pic)
+    #     dest_img = self.end_pic.convert('RGB')
+    #     dest_img = val_transform(dest_img).unsqueeze(dim=0)
+    #     next_imgs = torch.cat((next_imgs, dest_img), dim=0)
+    #
+    #     dest_angle = [0, 0]
+    #     next_angles.append(dest_angle)
+    #     next_angles = torch.tensor(next_angles, dtype=torch.float)
+    #
+    #     # if there are not enough input frames
+    #     for i in range(0, self.len - 1 - len(cur_pic)):
+    #         next_imgs = torch.cat((next_imgs, torch.zeros((1, 3, 256, 256))), dim=0)
+    #         next_angles = torch.cat((next_angles, torch.zeros((1, 2))), dim=0)
+    #
+    #     # add a batch dimension
+    #     return next_imgs.unsqueeze(dim=0), next_angles.unsqueeze(dim=0)
 
     def get_img_input(self):
         normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                          std=[0.229, 0.224, 0.225])
         val_transform = transforms.Compose([
-            transforms.Resize(256),
-            transforms.CenterCrop((256, 256)),
             transforms.ToTensor(),
             normalize,
         ])
@@ -222,20 +220,20 @@ class MyUAVgym(gym.Env):
         state = torch.cat((img1, img2), dim=0)
         return state
 
-    def get_labels(self):
-        # 因为backbone输出的是一个图像归一化的坐标，而不是两个图像一起归一化的坐标，所以奖励无法上升
-        pos1 = self.cur_pos[:]
-        pos1.extend(self.end_pos[:])
-        pos1[0] -= 23.55
-        pos1[0] *= 100
-        pos1[1] -= 120.3
-        pos1[1] *= 100
-        pos1[2] -= 23.55
-        pos1[2] *= 100
-        pos1[3] -= 120.3
-        pos1[3] *= 100
-
-        self.labels = torch.tensor(pos1, dtype=torch.float32)
+    # def get_labels(self):
+    #     # 因为backbone输出的是一个图像归一化的坐标，而不是两个图像一起归一化的坐标，所以奖励无法上升
+    #     pos1 = self.cur_pos[:]
+    #     pos1.extend(self.end_pos[:])
+    #     pos1[0] -= 23.55
+    #     pos1[0] *= 100
+    #     pos1[1] -= 120.3
+    #     pos1[1] *= 100
+    #     pos1[2] -= 23.55
+    #     pos1[2] *= 100
+    #     pos1[3] -= 120.3
+    #     pos1[3] *= 100
+    #
+    #     self.labels = torch.tensor(pos1, dtype=torch.float32)
 
     # def get_pos_input(self):
     #     state = self.cur_pos[:]
@@ -243,44 +241,31 @@ class MyUAVgym(gym.Env):
     #     return state
 
     def reset(self):
-        # p = random.randint(a=0, b=self.num_nodes - 1)
-        # q = random.randint(a=0, b=self.num_nodes - 1)
-        # while p == q:
-        #     p = random.randint(a=0, b=self.num_nodes - 1)
-        #     q = random.randint(a=0, b=self.num_nodes - 1)
-        p = 0
-        q = 1
+        p = random.randint(a=0, b=9)
+
         self.start_pos = list(self.points[p])
-        self.end_pos = list(self.points[q])
+        self.end_pos = [23.4, 120.3]
         self.cur_pos = self.start_pos
 
-        keys = list(self.HEIGHT_NOISE.keys())
+        # keys = list(self.HEIGHT_NOISE.keys())
         # k_index = random.randint(a=0, b=len(keys) - 1)
-        k_index = 1
-        self.height = keys[k_index]
+        # self.height = keys[k_index]
 
+        # # choose a kind of noise
         # noise_db_index = random.randint(a=0, b=len(self.NOISE_DB) - 1)
-        noise_db_index = 0
-        # choose a kind of noise
-        self.image_augment = ImageAugment(style_idx=self.NOISE_DB[noise_db_index][0],
-                                          shift_idx=self.NOISE_DB[noise_db_index][1])
-        shift = self.image_augment.forward_shift(self.HEIGHT_NOISE[self.height])
-        self.start_pos[0] += shift[0]
-        self.start_pos[1] += shift[1]
-        self.cur_height = self.height + shift[2]
-        self.cur_pos = self.start_pos
+        # self.image_augment = ImageAugment(style_idx=self.NOISE_DB[noise_db_index][0],
+        #                                   shift_idx=self.NOISE_DB[noise_db_index][1])
+        # shift = self.image_augment.forward_shift(self.HEIGHT_NOISE[self.height])
+        # self.start_pos[0] += shift[0]
+        # self.start_pos[1] += shift[1]
+        # self.cur_height = self.height + shift[2]
+        # self.cur_pos = self.start_pos
 
         lat_diff = (self.end_pos[0] - self.cur_pos[0]) * 111000
         lon_diff = (self.end_pos[1] - self.cur_pos[1]) * 111000 * math.cos(self.cur_pos[0] / 180 * math.pi)
         self.last_diff = math.sqrt(lat_diff * lat_diff + lon_diff * lon_diff)
         self.init_diff = self.last_diff
-        # print(self.init_diff)
-        # print("start_pos:")
-        # print(self.start_pos)
-        # print("end_pos:")
-        # print(self.end_pos)
-        # print("height:")
-        # print(self.cur_height)
+
         # screenshot the start point image
         self.start_pic = screenshot(self.paths, self.path_labels, self.start_pos[0], self.start_pos[1],
                                     self.cur_height, self.image_augment)
@@ -288,36 +273,15 @@ class MyUAVgym(gym.Env):
                                   self.cur_height, self.image_augment)
         self.cur_pic = self.start_pic
 
-        self.get_labels()
-
         self.next_angles = []
 
-        self.step_num = 0
+        self.step_num = 1
 
         state = self.get_img_input()
         return state, self.labels
 
     def step(self, action):
-        # # 根据cur_pos, end计算下一步的angle
-        # lat_diff = (self.end_pos[0] - self.cur_pos[0]) * 111000
-        # lon_diff = (self.end_pos[1] - self.cur_pos[1]) * 111000 * math.cos(self.cur_pos[0] / 180 * math.pi)
-        # # tan = lat_diff / lon_diff
-        # # self.angle = math.atan(tan)
-        # # if lat_diff > 0 and lon_diff < 0:
-        # #     self.angle += 180
-        # # elif lat_diff < 0 and lon_diff < 0:
-        # #     self.angle -= 180
-        # # assert -180 <= self.angle <= 180
-        # diff = math.sqrt(lat_diff * lat_diff + lon_diff * lon_diff)
-        # # print(diff)
-        # self.angle = torch.tensor([lat_diff / diff, lon_diff / diff], dtype=torch.float32)
-
         # 根据cur_pos, action计算下一步的cur_pos
-        # action *= 180
-        # sin = math.sin(action)
-        # cos = math.cos(action)
-        # lat_delta = self.dis * sin
-        # lon_delta = self.dis * cos
         lat_delta = self.dis * action[0]
         lon_delta = self.dis * action[1]
         lat_delta = float(lat_delta / 111000)
@@ -325,46 +289,11 @@ class MyUAVgym(gym.Env):
         self.cur_pos[0] += lat_delta
         self.cur_pos[1] += lon_delta
 
-        # add shift noise to the origin position
-        shift = self.image_augment.forward_shift(self.HEIGHT_NOISE[self.height])
-        self.cur_pos[0] += shift[0]
-        self.cur_pos[1] += shift[1]
-        # print(self.cur_pos)
-        self.cur_height = self.height + shift[2]
-
-        # 根据self.angle, action计算reward
-        # 相差angle_thresh度以内就增加概率
-        # 每走一步减一
-        # reward = 0
-        # res = math.fabs(self.angle - action)
-        # if res > 180:
-        #     res = 360 - res
-        # print(math.fabs(res))
-        # if math.fabs(res) > self.angle_thresh:
-        #     reward -= 0.1
-        # else:
-        #     reward += 1 / math.fabs(res)
-        # reward = -math.fabs(res) + self.angle_thresh - 1
-        # 130
-
-        # reward = 1 / torch.norm(self.angle - action, p=2, dim=0) 294
-        # reward = 1 / torch.norm(self.angle - action, p=2, dim=0) + 10 / diff - 0.5 195
-        # reward = 1 / torch.norm(self.angle - action, p=2, dim=0) - 0.5 194
-        # reward = 1 / torch.norm(self.angle - action, p=2, dim=0) - 0.5 - 0.2 154
-        # reward = 1 / torch.norm(self.angle - action, p=2, dim=0) + 10 / diff - 1 95
-        # reward = 1 / torch.norm(self.angle - action, p=2, dim=0) - 1 94
-        # reward = 1 / torch.norm(self.angle - action, p=2, dim=0) + 1 / diff - 1 94
-
-        # reward = 1 / torch.norm(self.angle - action, p=1, dim=0)
-        # reward = 1 / torch.norm(self.angle - action, p=1, dim=0) - 0.1 - 0.2 166
-        # reward = 1 / torch.norm(self.angle - action, p=1, dim=0) - 0.5 126
-
-        #
-        # 129
-        # reward = 1 / torch.norm(self.angle - action, p=1, dim=0) + 10 / diff - 0.5
-        # print(torch.norm(self.angle - action, p=2, dim=0))
-        # reward = -math.pow(min(1, (torch.norm(self.angle - action, p=2, dim=0) / (2 * math.sqrt(2)) +
-        #                             diff / 3000) / 2), 2.8)
+        # # add shift noise to the origin position
+        # shift = self.image_augment.forward_shift(self.HEIGHT_NOISE[self.height])
+        # self.cur_pos[0] += shift[0]
+        # self.cur_pos[1] += shift[1]
+        # self.cur_height = self.height + shift[2]
 
         # 根据下一步cur_pos, end计算done
         lat_diff = (self.end_pos[0] - self.cur_pos[0]) * 111000
@@ -384,14 +313,11 @@ class MyUAVgym(gym.Env):
         if diff <= self.done_thresh and self.step_num <= self.max_step_num - 1:
             print("successfully arrived! in " + str(diff) + " m, by total_step_num: "
                   + str(self.step_num) + " / " + str(self.last_diff // self.dis))
-            print("origin end point pos:" + str(self.end_pos[0]) + "," + str(self.end_pos[1]))
-            print("actual end point pos:" + str(self.cur_pos[0]) + "," + str(self.cur_pos[1]))
+            # print("origin end point pos:" + str(self.end_pos[0]) + "," + str(self.end_pos[1]))
+            # print("actual end point pos:" + str(self.cur_pos[0]) + "," + str(self.cur_pos[1]))
             success = 1
             success_diff = diff
             reward = reward1 + 10
-        # # 超时结束
-        # elif self.step_num == self.max_step_num - 1:
-        #     reward = reward1 - 100
 
         # 根据下一步cur_pos计算下一步state
         new_img = screenshot(self.paths, self.path_labels, self.cur_pos[0], self.cur_pos[1],
@@ -399,7 +325,6 @@ class MyUAVgym(gym.Env):
         if type(new_img) is list:
             self.cur_pic = new_img[0]
             state = self.get_img_input()
-            self.get_labels()
 
             self.step_num += 1
             info = {}
@@ -407,7 +332,6 @@ class MyUAVgym(gym.Env):
         else:
             self.cur_pic = new_img
             state = self.get_img_input()
-            self.get_labels()
 
             self.step_num += 1
             info = {}

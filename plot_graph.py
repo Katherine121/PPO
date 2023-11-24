@@ -119,8 +119,8 @@ def save_graph(run_num):
 
 
 if __name__ == '__main__':
-    save_graph(5)
-    # save_graph(6)
+    # save_graph(0)
+    save_graph(3)
 
     # save_graph(7)
     # save_graph(8)

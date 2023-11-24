@@ -68,22 +68,6 @@ class ActorCritic(nn.Module):
             # 用init*init填充形状为(action_dim,)的tensor
             self.action_var = torch.full((action_dim,), action_std_init * action_std_init).to(device)
 
-        # # actor0000000000000000000000000000000000
-        # if has_continuous_action_space:
-        #     backbone1 = AlexNet(num_classes=2, dropout=0.)
-        #     backbone1.classifier = nn.Identity()
-        #     self.actor = ARTransformer(backbone=backbone1, extractor_dim=9216)
-        # else:
-        #     backbone1 = AlexNet(num_classes=2, dropout=0.)
-        #     backbone1.classifier = nn.Identity()
-        #     self.actor = ARTransformer(backbone=backbone1, extractor_dim=9216)
-        # self.actor = self.actor.cuda()
-        # # critic
-        # backbone2 = AlexNet(num_classes=1, dropout=0.)
-        # backbone2.classifier = nn.Identity()
-        # self.critic = Critic(backbone=backbone2, extractor_dim=9216)
-        # self.critic = self.critic.cuda()
-        # # actor111111111111111111111111111111
         # if has_continuous_action_space:
         #     self.actor = nn.Sequential(
         #         nn.Linear(state_dim, 64),
@@ -110,51 +94,7 @@ class ActorCritic(nn.Module):
         #     nn.Tanh(),
         #     nn.Linear(64, 1),
         # )
-        # # actor22222222222222222222222
-        # backbone1 = torchvision.models.mobilenet_v3_small(weights=(MobileNet_V3_Small_Weights.IMAGENET1K_V1))
-        # backbone1.classifier = nn.Sequential(
-        #     nn.Linear(576, 1024),
-        #     nn.Hardswish(inplace=True),
-        #     nn.Dropout(p=0.2, inplace=True),
-        #     nn.Linear(1024, 2),
-        # )
-        # load_weight(backbone1, "pos_pretrained/model_label_best218.pth.tar")
-        # for name, param in backbone1.named_parameters():
-        #     param.requires_grad = False
-        #
-        # backbone2 = torchvision.models.mobilenet_v3_small(weights=(MobileNet_V3_Small_Weights.IMAGENET1K_V1))
-        # backbone2.classifier = nn.Sequential(
-        #     nn.Linear(576, 1024),
-        #     nn.Hardswish(inplace=True),
-        #     nn.Dropout(p=0.2, inplace=True),
-        #     nn.Linear(1024, 2),
-        # )
-        # load_weight(backbone2, "pos_pretrained/model_label_best218.pth.tar")
-        # for name, param in backbone2.named_parameters():
-        #     param.requires_grad = False
-        #
-        # if has_continuous_action_space:
-        #     self.actor = ARTransformer(
-        #         backbone=backbone1,
-        #         backbone_pretrained=None,
-        #         extractor_dim=576
-        #     )
-        #     self.actor = self.actor.cuda()
-        # else:
-        #     self.actor = ARTransformer(
-        #         backbone=backbone1,
-        #         backbone_pretrained=None,
-        #         extractor_dim=576
-        #     )
-        #     self.actor = self.actor.cuda()
-        # # critic
-        # self.critic = Critic(
-        #     backbone=backbone2,
-        #     backbone_pretrained=None,
-        #     extractor_dim=576
-        # )
-        # self.critic = self.critic.cuda()
-        # actor3333333333333333333333333
+
         self.actor = Actor()
         self.actor = self.actor.cuda()
         self.critic = Critic()
@@ -173,17 +113,16 @@ class ActorCritic(nn.Module):
 
     # old policy
     def act(self, state):
-        input = state
         if self.has_continuous_action_space:
             # 输入状态，经过神经网络，输出动作（连续值）
-            action_mean = self.actor(input)
+            action_mean = self.actor(state)
             # 取self.action_var的对角线元素
             cov_mat = torch.diag(self.action_var).unsqueeze(dim=0)
             # 输入：分布的平均值、正定协方差矩阵
             # 输出：由均值向量和协方差矩阵参数化的多元正态(也称为高斯)分布
             dist = MultivariateNormal(action_mean, cov_mat)
         else:
-            action_probs = self.actor(input)
+            action_probs = self.actor(state)
             dist = Categorical(action_probs)
 
         # 离散动作：根据概率进行采样
@@ -191,16 +130,15 @@ class ActorCritic(nn.Module):
         action = dist.sample()
         action_logprob = dist.log_prob(action)
         # 输入状态，经过神经网络，输出奖励
-        state_val = self.critic(input)
+        state_val = self.critic(state)
 
         return action.detach(), action_logprob.detach(), state_val.detach(), \
                action.detach(), state_val.detach()
 
     # new policy
     def evaluate(self, state, action):
-        input = state
         if self.has_continuous_action_space:
-            action_mean = self.actor(input)
+            action_mean = self.actor(state)
 
             # 将self.action_var扩展到和action_mean一样的维度
             action_var = self.action_var.expand_as(action_mean)
@@ -213,31 +151,31 @@ class ActorCritic(nn.Module):
             if self.action_dim == 1:
                 action = action.reshape(-1, self.action_dim)
         else:
-            action_probs = self.actor(input)
+            action_probs = self.actor(state)
             dist = Categorical(action_probs)
         action_logprobs = dist.log_prob(action)
         dist_entropy = dist.entropy()
-        state_values = self.critic(input)
+        state_values = self.critic(state)
 
         return action_logprobs, state_values, dist_entropy, action_logprobs, state_values
 
 
-def normalization(state):
-    data = state.clone().detach()
-    if len(data.shape) == 1:
-        data[0] -= 23.55
-        data[1] -= 120.3
-        data[2] -= 23.55
-        data[3] -= 120.3
-    elif len(data.shape) == 2:
-        data[:, 0] -= 23.55
-        data[:, 1] -= 120.3
-        data[:, 2] -= 23.55
-        data[:, 3] -= 120.3
-    mean = torch.mean(data, dim=-1, keepdim=True)
-    std = torch.std(data, dim=-1, keepdim=True)
-    normData = (data - mean) / std
-    return normData
+# def normalization(state):
+#     data = state.clone().detach()
+#     if len(data.shape) == 1:
+#         data[0] -= 23.55
+#         data[1] -= 120.3
+#         data[2] -= 23.55
+#         data[3] -= 120.3
+#     elif len(data.shape) == 2:
+#         data[:, 0] -= 23.55
+#         data[:, 1] -= 120.3
+#         data[:, 2] -= 23.55
+#         data[:, 3] -= 120.3
+#     mean = torch.mean(data, dim=-1, keepdim=True)
+#     std = torch.std(data, dim=-1, keepdim=True)
+#     normData = (data - mean) / std
+#     return normData
 
 
 class PPO:
@@ -257,6 +195,11 @@ class PPO:
         self.buffer = RolloutBuffer()
 
         self.policy = ActorCritic(state_dim, action_dim, has_continuous_action_space, action_std_init).to(device)
+        # state_dict = torch.load("PPO_preTrained/UAVnavigation/PPO_UAVnavigation_0_0_best.pth")
+        # print(state_dict["best_acc"])
+        # self.policy.load_state_dict(state_dict["state_dict"])
+        # for name, param in self.policy.named_parameters():
+        #     print(param)
         self.optimizer = torch.optim.Adam([
             {'params': self.policy.actor.parameters(), 'lr': lr_actor},
             {'params': self.policy.critic.parameters(), 'lr': lr_critic}
@@ -338,7 +281,6 @@ class PPO:
         old_actions = torch.squeeze(torch.stack(self.buffer.actions, dim=0)).detach().to(device)
         old_logprobs = torch.squeeze(torch.stack(self.buffer.logprobs, dim=0)).detach().to(device)
         old_state_values = torch.squeeze(torch.stack(self.buffer.state_values, dim=0)).detach().to(device)
-        # old_labels = torch.squeeze(torch.stack(self.buffer.labels, dim=0)).detach().to(device)
 
         # calculate advantages
         advantages = rewards.detach() - old_state_values.detach()
@@ -369,8 +311,8 @@ class PPO:
             total_loss = 0
             size = len(self.buffer.actions)
             for i in range(0, size // self.batch_size):
-                start = size - self.batch_size * (i + 1)
-                end = size - self.batch_size * i
+                start = i * self.batch_size
+                end = start + self.batch_size
                 logprobs, state_values, dist_entropy, actor_label, critic_label = \
                     self.policy.evaluate(old_states[start: end], old_actions[start: end])
 
@@ -388,13 +330,6 @@ class PPO:
                 # final loss of clipped objective PPO
                 loss = -torch.min(surr1, surr2) + 0.5 * self.MseLoss(state_values, rewards[start: end]) \
                        - 0.01 * dist_entropy
-
-                # criterion = nn.MSELoss().cuda()
-                # actor_loss = criterion(actor_label, old_labels[start: end])
-                # critic_loss = criterion(critic_label, old_labels[start: end])
-                #
-                # balance_criterion = UncertaintyLoss().cuda()
-                # loss = balance_criterion([loss1, actor_loss, critic_loss])
 
                 # take gradient step
                 self.optimizer.zero_grad()
@@ -403,9 +338,9 @@ class PPO:
 
                 total_loss += loss.mean().item()
 
-            if size - self.batch_size * i > 0:
-                start = 0
-                end = size - self.batch_size * i
+            if size % self.batch_size > 0:
+                start = i * self.batch_size
+                end = size - 1
                 logprobs, state_values, dist_entropy, actor_label, critic_label = \
                     self.policy.evaluate(old_states[start: end], old_actions[start: end])
 
@@ -423,13 +358,6 @@ class PPO:
                 # final loss of clipped objective PPO
                 loss = -torch.min(surr1, surr2) + 0.5 * self.MseLoss(state_values, rewards[start: end]) \
                        - 0.01 * dist_entropy
-
-                # criterion = nn.MSELoss().cuda()
-                # actor_loss = criterion(actor_label, old_labels[start: end])
-                # critic_loss = criterion(critic_label, old_labels[start: end])
-                #
-                # balance_criterion = UncertaintyLoss().cuda()
-                # loss = balance_criterion([loss1, actor_loss, critic_loss])
 
                 # take gradient step
                 self.optimizer.zero_grad()
@@ -441,18 +369,11 @@ class PPO:
             if epoch_i % 5 == 0:
                 print("Epoch" + str(epoch_i) + ", Loss: " + str(total_loss / (i + 1)))
 
-        # with open("loss.txt", "a") as file1:
-        #     file1.write(str(loss.mean()) + "\n")
-
         # Copy new weights into old policy
         self.policy_old.load_state_dict(self.policy.state_dict())
 
         # clear buffer
         self.buffer.clear()
-        # self.policy.actor.norm.running_ms.n = 0
-        # self.policy.critic.norm.running_ms.n = 0
-        # self.policy_old.actor.norm.running_ms.n = 0
-        # self.policy_old.critic.norm.running_ms.n = 0
 
     def save(self, time_step, best_acc, checkpoint_path):
         if best_acc == -1:
