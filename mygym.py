@@ -15,7 +15,7 @@ from data_augment import ImageAugment
 
 def get_start_end(center_lat=23.4, center_lon=120.3,
                   num_nodes=10,
-                  radius=5000, ):
+                  radius=3000, ):
     points = []
     # 计算每个点之间的角度间隔
     angle_step = 2 * math.pi / num_nodes
@@ -52,7 +52,7 @@ def get_big_map(path):
     return paths, labels
 
 
-def screenshot(paths, labels, new_lat, new_lon, cur_height, img_aug, path):
+def screenshot(paths, labels, new_lat, new_lon, cur_height, img_aug):
     # new frame path
     min_dis = math.inf
     idx = -1
@@ -109,20 +109,30 @@ def screenshot(paths, labels, new_lat, new_lon, cur_height, img_aug, path):
     # pic = np.array(pic)
     # pic = img_aug(pic)
     # pic = Image.fromarray(pic)
-    pic.save(path)
+    # pic.save(path)
+
+    normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                     std=[0.229, 0.224, 0.225])
+    val_transform = transforms.Compose([
+        transforms.ToTensor(),
+        normalize,
+    ])
+    pic = pic.convert('RGB')
+    pic = val_transform(pic)
+    pic = pic.unsqueeze(dim=0)
 
     # # new screenshot image
     # return pic
     # If the center of the new image is out of bounds
     if new_lon_pixel - pixel_w // 2 > 1400:
-        return [path, -1]
+        return [pic, -1]
     if new_lat_pixel - pixel_h // 2 > 1400:
-        return [path, -1]
+        return [pic, -1]
     if new_lon_pixel + pixel_w // 2 < 0:
-        return [path, -1]
+        return [pic, -1]
     if new_lat_pixel + pixel_h // 2 < 0:
-        return [path, -1]
-    return path
+        return [pic, -1]
+    return pic
 
 
 class MyUAVgym(gym.Env):
@@ -209,7 +219,7 @@ class MyUAVgym(gym.Env):
     #     return next_imgs.unsqueeze(dim=0), next_angles.unsqueeze(dim=0)
 
     def get_img_input(self):
-        return list([self.cur_pic, self.end_pic])
+        return torch.cat((self.cur_pic, self.end_pic), dim=0)
 
     # def get_labels(self):
     #     # 因为backbone输出的是一个图像归一化的坐标，而不是两个图像一起归一化的坐标，所以奖励无法上升
@@ -231,23 +241,16 @@ class MyUAVgym(gym.Env):
     #     state.extend(self.end_pos)
     #     return state
 
-    def reset(self, episode_files_dir):
+    def reset(self):
         # p = random.randint(a=0, b=self.num_nodes - 1)
         # q = random.randint(a=0, b=self.num_nodes - 1)
         # while p == q:
         #     p = random.randint(a=0, b=self.num_nodes - 1)
         #     q = random.randint(a=0, b=self.num_nodes - 1)
-        p = 0
-        q = 1
-        # p_list = [0, 1, 2, 8, 9]
-        # q_list = [0, 1, 2, 8, 9]
-        # p = p_list[random.randint(a=0, b=4)]
-        # q = q_list[random.randint(a=0, b=4)]
-        # while p == q:
-        #     p = p_list[random.randint(a=0, b=4)]
-        #     q = q_list[random.randint(a=0, b=4)]
+        p = random.randint(a=0, b=9)
+
         self.start_pos = list(self.points[p])
-        self.end_pos = list(self.points[q])
+        self.end_pos = [23.4, 120.3]
         self.cur_pos = self.start_pos
 
         # keys = list(self.HEIGHT_NOISE.keys())
@@ -270,15 +273,10 @@ class MyUAVgym(gym.Env):
         self.init_diff = self.last_diff
 
         # screenshot the start point image
-        self.episode_files_dir = episode_files_dir
-        start_path = episode_files_dir + str(0) + "," + \
-                     str(self.cur_pos[0]) + "," + str(self.cur_pos[1]) + "," + str(self.height) + '.png'
         self.start_pic = screenshot(self.paths, self.path_labels, self.start_pos[0], self.start_pos[1],
-                                    self.cur_height, self.image_augment, start_path)
-        end_path = episode_files_dir + str(1000) + "," + \
-                   str(self.end_pos[0]) + "," + str(self.end_pos[1]) + "," + str(self.height) + '.png'
+                                    self.cur_height, self.image_augment)
         self.end_pic = screenshot(self.paths, self.path_labels, self.end_pos[0], self.end_pos[1],
-                                  self.cur_height, self.image_augment, end_path)
+                                  self.cur_height, self.image_augment)
         self.cur_pic = self.start_pic
 
         self.next_angles = []
@@ -321,17 +319,15 @@ class MyUAVgym(gym.Env):
         if diff <= self.done_thresh and self.step_num <= self.max_step_num - 1:
             print("successfully arrived! in " + str(diff) + " m, by total_step_num: "
                   + str(self.step_num) + " / " + str(self.last_diff // self.dis))
-            print("origin end point pos:" + str(self.end_pos[0]) + "," + str(self.end_pos[1]))
-            print("actual end point pos:" + str(self.cur_pos[0]) + "," + str(self.cur_pos[1]))
+            # print("origin end point pos:" + str(self.end_pos[0]) + "," + str(self.end_pos[1]))
+            # print("actual end point pos:" + str(self.cur_pos[0]) + "," + str(self.cur_pos[1]))
             success = 1
             success_diff = diff
             reward = reward1 + 10
 
         # 根据下一步cur_pos计算下一步state
-        new_path = self.episode_files_dir + str(self.step_num) + "," + \
-                   str(self.cur_pos[0]) + "," + str(self.cur_pos[1]) + "," + str(self.height) + '.png'
         new_img = screenshot(self.paths, self.path_labels, self.cur_pos[0], self.cur_pos[1],
-                             self.cur_height, self.image_augment, new_path)
+                             self.cur_height, self.image_augment)
         if type(new_img) is list:
             self.cur_pic = new_img[0]
             state = self.get_img_input()

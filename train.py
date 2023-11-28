@@ -17,45 +17,44 @@ def train():
 
     ####### initialize environment hyperparameters ######
     env_name = "UAVnavigation"
-
     has_continuous_action_space = True  # continuous action space; else discrete
 
-    max_ep_len = 64  # max timesteps in one episode
-    max_training_timesteps = int(6e6)  # break training loop if timeteps > max_training_timesteps
+    max_ep_len = 512  # max timesteps in one episode
+    update_timestep = 100  # update policy every n timesteps
+    batch_size = 128
+    run_num = 4
+    random_seed = 0  # set random seed if required (0 = no random seed)
 
-    print_freq = max_ep_len * 100  # print avg reward in the interval (in num timesteps)
-    log_freq = max_ep_len * 100  # log avg reward in the interval (in num timesteps)
-    save_model_freq = max_ep_len * 500  # save model frequency (in num timesteps)
+    max_training_timesteps = int(6e6)  # break training loop if timeteps > max_training_timesteps
+    # print_freq = max_ep_len * 100  # print avg reward in the interval (in num timesteps)
+    # log_freq = max_ep_len * 100  # log avg reward in the interval (in num timesteps)
+    save_model_freq = 500  # save model frequency (in num timesteps)
 
     action_std = 0.6  # starting std for action distribution (Multivariate Normal)
     action_std_decay_rate = 0.05  # linearly decay action_std (action_std = action_std - action_std_decay_rate)
     min_action_std = 0.1  # minimum action_std (stop decay after action_std <= min_action_std)
-    action_std_decay_freq = int(2.5e5)  # action_std decay frequency (in num timesteps)
+    action_std_decay_freq = int(2.5e5 / max_ep_len)  # action_std decay frequency (in num timesteps)
     #####################################################
 
     ## Note : print/log frequencies should be > than max_ep_len
 
     ################ PPO hyperparameters ################
     # 4 episode, update 1 policy
-    update_timestep = max_ep_len * 100  # update policy every n timesteps
     K_epochs = 30  # update policy for K epochs in one PPO update
-    batch_size = 128
 
     eps_clip = 0.2  # clip parameter for PPO
     gamma = 0.99  # discount factor
-    # gamma = 0
 
     lr_actor = 0.0003  # learning rate for actor network
     lr_critic = 0.001  # learning rate for critic network
     wd = 0.1
 
-    random_seed = 0  # set random seed if required (0 = no random seed)
     #####################################################
 
     print("training environment name : " + env_name)
 
-    env = MyUAVgym(len=6, bigmap_dir="../../../mnt/nfs/wyx/bigmap", num_nodes=10, dis=250,
-                   done_thresh=125, max_step_num=max_ep_len)
+    env = MyUAVgym(len=6, bigmap_dir="../../../mnt/nfs/wyx/bigmap", num_nodes=10, dis=200,
+                   done_thresh=100, max_step_num=max_ep_len)
 
     # state space dimension
     state_dim = env.observation_space.shape[0]
@@ -77,10 +76,6 @@ def train():
     if not os.path.exists(log_dir):
         os.makedirs(log_dir)
 
-    #### get number of log files in log directory
-    current_num_files = next(os.walk(log_dir))[2]
-    run_num = 6
-
     #### create new log file for each run
     log_f_name = log_dir + '/PPO_' + env_name + "_log_" + str(run_num) + ".csv"
     #### create new log file for each run
@@ -91,9 +86,6 @@ def train():
     print("current logging run number for " + env_name + " : ", run_num)
     print("logging at : " + log_f_name)
     #####################################################
-
-    ################### checkpointing ###################
-    run_num_pretrained = 0  #### change this to prevent overwriting weights in same env_name folder
 
     directory = "PPO_preTrained"
     if not os.path.exists(directory):
@@ -113,8 +105,8 @@ def train():
     print("max training timesteps : ", max_training_timesteps)
     print("max timesteps per episode : ", max_ep_len)
     print("model saving frequency : " + str(save_model_freq) + " timesteps")
-    print("log frequency : " + str(log_freq) + " timesteps")
-    print("printing average reward over episodes in last : " + str(print_freq) + " timesteps")
+    # print("log frequency : " + str(log_freq) + " timesteps")
+    # print("printing average reward over episodes in last : " + str(print_freq) + " timesteps")
     print("--------------------------------------------------------------------------------------------")
     print("state space dimension : ", state_dim)
     print("action space dimension : ", action_dim)
@@ -185,7 +177,7 @@ def train():
     time_step = 0
     i_episode = 0
     best_acc = 0
-    complete_episode_num = 0
+    batch_index = 0
     datasets_path = "datasets" + str(run_num)
     if os.path.exists(datasets_path) is True:
         del_file(datasets_path)
@@ -194,15 +186,11 @@ def train():
     while time_step <= max_training_timesteps:
         if os.path.exists(datasets_path) is False:
             os.mkdir(datasets_path)
-        episode_files_dir = datasets_path + "/" + str(complete_episode_num) + "/"
-        if os.path.exists(episode_files_dir) is False:
-            os.mkdir(episode_files_dir)
 
-        state, labels = env.reset(episode_files_dir)
+        state, labels = env.reset()
         current_ep_reward = 0
 
         for t in range(1, max_ep_len):
-
             # select action with policy
             action = ppo_agent.select_action(state, labels)
             state, labels, reward, done, _, success, success_diff = env.step(action)
@@ -217,6 +205,13 @@ def train():
             time_step += 1
             current_ep_reward += reward
 
+            if time_step % batch_size == 0:
+                batch_dir = datasets_path + "/" + str(batch_index) + ".pt"
+                batch_index += 1
+                state_buffer = torch.stack(ppo_agent.buffer.states, dim=0)
+                torch.save(state_buffer, batch_dir)
+                ppo_agent.buffer.states.clear()
+
             # break; if the episode is over
             if done:
                 break
@@ -228,10 +223,9 @@ def train():
         log_running_episodes += 1
 
         i_episode += 1
-        complete_episode_num += 1
 
         # update PPO agent
-        if complete_episode_num % 100 == 0:
+        if i_episode % update_timestep == 0:
 
             if total_success_num > 0:
                 print("total success num is: " + str(total_success_num / print_running_episodes))
@@ -279,7 +273,7 @@ def train():
             print_running_episodes = 0
 
         # save model weights
-        if complete_episode_num % 500 == 0:
+        if i_episode % save_model_freq == 0:
             print("--------------------------------------------------------------------------------------------")
             print("saving model at : " + checkpoint_path)
             ppo_agent.save(time_step, -1, checkpoint_path)
@@ -287,12 +281,19 @@ def train():
             print("Elapsed Time  : ", datetime.now().replace(microsecond=0) - start_time)
             print("--------------------------------------------------------------------------------------------")
 
-        if complete_episode_num % 100 == 0:
-            ppo_agent.update()
+        if i_episode % update_timestep == 0:
+            if len(ppo_agent.buffer.states) > 0:
+                batch_dir = datasets_path + "/" + str(batch_index) + ".pt"
+                batch_index += 1
+                state_buffer = torch.stack(ppo_agent.buffer.states, dim=0)
+                torch.save(state_buffer, batch_dir)
+                ppo_agent.buffer.states.clear()
+            ppo_agent.update(datasets_path)
             del_file(datasets_path)
+            batch_index = 0
 
         # if continuous action space; then decay action std of ouput action distribution
-        if has_continuous_action_space and complete_episode_num % 1000 == 0:
+        if has_continuous_action_space and i_episode % action_std_decay_freq == 0:
             ppo_agent.decay_action_std(action_std_decay_rate, min_action_std)
 
     log_f.close()

@@ -1,18 +1,9 @@
 import os
-
 import torch
 import torch.nn as nn
-import torchvision
-from PIL import Image
 from torch.distributions import MultivariateNormal
 from torch.distributions import Categorical
-from torchvision import transforms
-from torchvision.models import MobileNet_V3_Small_Weights, AlexNet
-
-from dataset import UAVdataset
-from model import ARTransformer
-from utils import UncertaintyLoss
-from vit import ViT, Actor, Critic
+from vit import Actor, Critic
 
 ################################## set device ##################################
 print("============================================================================================")
@@ -71,93 +62,6 @@ class ActorCritic(nn.Module):
             # 用init*init填充形状为(action_dim,)的tensor
             self.action_var = torch.full((action_dim,), action_std_init * action_std_init).to(device)
 
-        # # actor0000000000000000000000000000000000
-        # if has_continuous_action_space:
-        #     backbone1 = AlexNet(num_classes=2, dropout=0.)
-        #     backbone1.classifier = nn.Identity()
-        #     self.actor = ARTransformer(backbone=backbone1, extractor_dim=9216)
-        # else:
-        #     backbone1 = AlexNet(num_classes=2, dropout=0.)
-        #     backbone1.classifier = nn.Identity()
-        #     self.actor = ARTransformer(backbone=backbone1, extractor_dim=9216)
-        # self.actor = self.actor.cuda()
-        # # critic
-        # backbone2 = AlexNet(num_classes=1, dropout=0.)
-        # backbone2.classifier = nn.Identity()
-        # self.critic = Critic(backbone=backbone2, extractor_dim=9216)
-        # self.critic = self.critic.cuda()
-        # # actor111111111111111111111111111111
-        # if has_continuous_action_space:
-        #     self.actor = nn.Sequential(
-        #         nn.Linear(state_dim, 64),
-        #         nn.Tanh(),
-        #         nn.Linear(64, 64),
-        #         nn.Tanh(),
-        #         nn.Linear(64, action_dim),
-        #         nn.Tanh()
-        #     )
-        # else:
-        #     self.actor = nn.Sequential(
-        #         nn.Linear(state_dim, 64),
-        #         nn.Tanh(),
-        #         nn.Linear(64, 64),
-        #         nn.Tanh(),
-        #         nn.Linear(64, action_dim),
-        #         nn.Softmax(dim=-1)
-        #     )
-        # # critic
-        # self.critic = nn.Sequential(
-        #     nn.Linear(state_dim, 64),
-        #     nn.Tanh(),
-        #     nn.Linear(64, 64),
-        #     nn.Tanh(),
-        #     nn.Linear(64, 1),
-        # )
-        # # actor22222222222222222222222
-        # backbone1 = torchvision.models.mobilenet_v3_small(weights=(MobileNet_V3_Small_Weights.IMAGENET1K_V1))
-        # backbone1.classifier = nn.Sequential(
-        #     nn.Linear(576, 1024),
-        #     nn.Hardswish(inplace=True),
-        #     nn.Dropout(p=0.2, inplace=True),
-        #     nn.Linear(1024, 2),
-        # )
-        # load_weight(backbone1, "pos_pretrained/model_label_best218.pth.tar")
-        # for name, param in backbone1.named_parameters():
-        #     param.requires_grad = False
-        #
-        # backbone2 = torchvision.models.mobilenet_v3_small(weights=(MobileNet_V3_Small_Weights.IMAGENET1K_V1))
-        # backbone2.classifier = nn.Sequential(
-        #     nn.Linear(576, 1024),
-        #     nn.Hardswish(inplace=True),
-        #     nn.Dropout(p=0.2, inplace=True),
-        #     nn.Linear(1024, 2),
-        # )
-        # load_weight(backbone2, "pos_pretrained/model_label_best218.pth.tar")
-        # for name, param in backbone2.named_parameters():
-        #     param.requires_grad = False
-        #
-        # if has_continuous_action_space:
-        #     self.actor = ARTransformer(
-        #         backbone=backbone1,
-        #         backbone_pretrained=None,
-        #         extractor_dim=576
-        #     )
-        #     self.actor = self.actor.cuda()
-        # else:
-        #     self.actor = ARTransformer(
-        #         backbone=backbone1,
-        #         backbone_pretrained=None,
-        #         extractor_dim=576
-        #     )
-        #     self.actor = self.actor.cuda()
-        # # critic
-        # self.critic = Critic(
-        #     backbone=backbone2,
-        #     backbone_pretrained=None,
-        #     extractor_dim=576
-        # )
-        # self.critic = self.critic.cuda()
-        # actor3333333333333333333333333
         self.actor = Actor()
         self.actor = self.actor.cuda()
         self.critic = Critic()
@@ -241,45 +145,22 @@ class ActorCritic(nn.Module):
 #     return normData
 
 
-def transform_input(state):
-    normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                     std=[0.229, 0.224, 0.225])
-    val_transform = transforms.Compose([
-        transforms.ToTensor(),
-        normalize,
-    ])
-    cur_img = Image.open(state[0])
-    cur_img = cur_img.convert('RGB')
-    cur_img = val_transform(cur_img)
-    cur_img = cur_img.unsqueeze(dim=0)
-    end_img = Image.open(state[1])
-    end_img = end_img.convert('RGB')
-    end_img = val_transform(end_img)
-    end_img = end_img.unsqueeze(dim=0)
-    new_state = torch.cat((cur_img, end_img), dim=0)
-    return new_state
-
-
-# def transform_path_tensor(state):
+# def transform_input(state):
 #     normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
 #                                      std=[0.229, 0.224, 0.225])
 #     val_transform = transforms.Compose([
 #         transforms.ToTensor(),
 #         normalize,
 #     ])
-#     new_state = []
-#     for s in state:
-#         cur_img = Image.open(s[0])
-#         cur_img = cur_img.convert('RGB')
-#         cur_img = val_transform(cur_img)
-#         cur_img = cur_img.unsqueeze(dim=0)
-#         end_img = Image.open(s[1])
-#         end_img = end_img.convert('RGB')
-#         end_img = val_transform(end_img)
-#         end_img = end_img.unsqueeze(dim=0)
-#         new_s = torch.cat((cur_img, end_img), dim=0)
-#         new_state.append(new_s)
-#
+#     cur_img = Image.open(state[0])
+#     cur_img = cur_img.convert('RGB')
+#     cur_img = val_transform(cur_img)
+#     cur_img = cur_img.unsqueeze(dim=0)
+#     end_img = Image.open(state[1])
+#     end_img = end_img.convert('RGB')
+#     end_img = val_transform(end_img)
+#     end_img = end_img.unsqueeze(dim=0)
+#     new_state = torch.cat((cur_img, end_img), dim=0)
 #     return new_state
 
 
@@ -340,9 +221,8 @@ class PPO:
 
         if self.has_continuous_action_space:
             with torch.no_grad():
-                input = transform_input(state)
-                input = torch.FloatTensor(input).to(device)
-                action, action_logprob, state_val, actor_label, critic_label = self.policy_old.act(input)
+                state = torch.FloatTensor(state).to(device)
+                action, action_logprob, state_val, actor_label, critic_label = self.policy_old.act(state)
 
             self.buffer.states.append(state)
             self.buffer.labels.append(labels)
@@ -363,7 +243,7 @@ class PPO:
 
             return action.item()
 
-    def update(self):
+    def update(self, datasets_path):
         # Monte Carlo estimate of returns
         rewards = []
         discounted_reward = 0
@@ -381,21 +261,12 @@ class PPO:
         old_actions = torch.squeeze(torch.stack(self.buffer.actions, dim=0)).detach().to(device)
         old_logprobs = torch.squeeze(torch.stack(self.buffer.logprobs, dim=0)).detach().to(device)
         old_state_values = torch.squeeze(torch.stack(self.buffer.state_values, dim=0)).detach().to(device)
-        # old_labels = torch.squeeze(torch.stack(self.buffer.labels, dim=0)).detach().to(device)
 
         # calculate advantages
         advantages = rewards.detach() - old_state_values.detach()
 
-        normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                         std=[0.229, 0.224, 0.225])
-        val_transform = transforms.Compose([
-            transforms.ToTensor(),
-            normalize,
-        ])
-        train_dataset = UAVdataset(train_list=self.buffer.states, transform=val_transform)
-        train_loader = torch.utils.data.DataLoader(
-            train_dataset, batch_size=self.batch_size, shuffle=False,
-            pin_memory=True, drop_last=False)
+        batch_list = os.listdir(datasets_path)
+        batch_list.sort(key=lambda x: int(x[:-3]))
 
         # Optimize policy for K epochs
         for epoch_i in range(self.K_epochs):
@@ -421,10 +292,14 @@ class PPO:
             # loss.mean().backward()
             # self.optimizer.step()
             total_loss = 0
-            for i, old_states in enumerate(train_loader):
+            index = 0
+            for i in range(0, len(batch_list)):
+                full_batch_dir = os.path.join(datasets_path, batch_list[i])
+                old_states = torch.load(full_batch_dir)
                 old_states = old_states.to(device).to(dtype=torch.float32)
-                start = i * self.batch_size
-                end = start + old_states.size(0)
+                start = index
+                end = index + old_states.size(0)
+                index = end
                 logprobs, state_values, dist_entropy, actor_label, critic_label = \
                     self.policy.evaluate(old_states, old_actions[start: end])
 
@@ -443,13 +318,6 @@ class PPO:
                 loss = -torch.min(surr1, surr2) + 0.5 * self.MseLoss(state_values, rewards[start: end]) \
                        - 0.01 * dist_entropy
 
-                # criterion = nn.MSELoss().cuda()
-                # actor_loss = criterion(actor_label, old_labels[start: end])
-                # critic_loss = criterion(critic_label, old_labels[start: end])
-                #
-                # balance_criterion = UncertaintyLoss().cuda()
-                # loss = balance_criterion([loss1, actor_loss, critic_loss])
-
                 # take gradient step
                 self.optimizer.zero_grad()
                 loss.mean().backward()
@@ -460,18 +328,11 @@ class PPO:
             if epoch_i % 5 == 0:
                 print("Epoch" + str(epoch_i) + ", Loss: " + str(total_loss / (i + 1)))
 
-        # with open("loss.txt", "a") as file1:
-        #     file1.write(str(loss.mean()) + "\n")
-
         # Copy new weights into old policy
         self.policy_old.load_state_dict(self.policy.state_dict())
 
         # clear buffer
         self.buffer.clear()
-        # self.policy.actor.norm.running_ms.n = 0
-        # self.policy.critic.norm.running_ms.n = 0
-        # self.policy_old.actor.norm.running_ms.n = 0
-        # self.policy_old.critic.norm.running_ms.n = 0
 
     def save(self, time_step, best_acc, checkpoint_path):
         if best_acc == -1:
@@ -490,6 +351,5 @@ class PPO:
 
 
 if __name__ == '__main__':
-    policy = ActorCritic(None, 2, True, 0.6)
     state_dict = torch.load("PPO_preTrained/UAVnavigation/PPO_UAVnavigation_0_5_best.pth")
     print(state_dict)
