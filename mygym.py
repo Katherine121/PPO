@@ -13,9 +13,7 @@ from torchvision import transforms
 from data_augment import ImageAugment
 
 
-def get_start_end(center_lat=23.4, center_lon=120.3,
-                  num_nodes=10,
-                  radius=3000, ):
+def get_start_end(num_nodes, radius, center_lat=23.4, center_lon=120.3,):
     points = []
     # 计算每个点之间的角度间隔
     angle_step = 2 * math.pi / num_nodes
@@ -52,7 +50,7 @@ def get_big_map(path):
     return paths, labels
 
 
-def screenshot(paths, labels, new_lat, new_lon, cur_height, img_aug):
+def screenshot(paths, labels, new_lat, new_lon, cur_height, img_aug, path):
     # new frame path
     min_dis = math.inf
     idx = -1
@@ -109,7 +107,8 @@ def screenshot(paths, labels, new_lat, new_lon, cur_height, img_aug):
     # pic = np.array(pic)
     # pic = img_aug(pic)
     # pic = Image.fromarray(pic)
-    # pic.save(path)
+    pic = pic.convert('RGB')
+    pic.save(path)
 
     normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                      std=[0.229, 0.224, 0.225])
@@ -117,7 +116,6 @@ def screenshot(paths, labels, new_lat, new_lon, cur_height, img_aug):
         transforms.ToTensor(),
         normalize,
     ])
-    pic = pic.convert('RGB')
     pic = val_transform(pic)
     pic = pic.unsqueeze(dim=0)
 
@@ -136,7 +134,7 @@ def screenshot(paths, labels, new_lat, new_lon, cur_height, img_aug):
 
 
 class MyUAVgym(gym.Env):
-    def __init__(self, len, bigmap_dir, num_nodes, dis, done_thresh, max_step_num):
+    def __init__(self, bigmap_dir, num_nodes, radius, dis, done_thresh, max_step_num):
         self.action_space = spaces.Box(low=-1.0, high=+1.0, shape=(2,), dtype=np.float32)
         self.observation_space = spaces.Box(low=-1.0, high=+1.0, shape=(2, 3, 256, 256,), dtype=np.float32)
         self.start_pos = []
@@ -145,17 +143,19 @@ class MyUAVgym(gym.Env):
         self.start_pic = None
         self.end_pic = None
         self.cur_pic = None
+        self.start_path = ""
+        self.end_path = ""
+        self.cur_path = ""
         self.last_diff = 0
         self.init_diff = 0
         self.next_angles = []
-        self.len = len
 
         self.bigmap_dir = bigmap_dir
         self.num_nodes = num_nodes
         self.dis = dis
         self.done_thresh = done_thresh
         self.max_step_num = max_step_num
-        self.points = get_start_end()
+        self.points = get_start_end(num_nodes=num_nodes, radius=radius)
         self.paths, self.path_labels = get_big_map(path=self.bigmap_dir)
 
         self.HEIGHT_NOISE = {100: 25, 150: 25, 200: 25, 250: 50, 300: 50}
@@ -169,8 +169,7 @@ class MyUAVgym(gym.Env):
                          ]
         self.step_num = 0
         self.image_augment = None
-        self.labels = None
-        self.episode_files_dir = ""
+        self.episode_dir = ""
 
     # def get_input(self):
     #     normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
@@ -241,14 +240,16 @@ class MyUAVgym(gym.Env):
     #     state.extend(self.end_pos)
     #     return state
 
-    def reset(self):
+    def reset(self, episode_dir):
         # p = random.randint(a=0, b=self.num_nodes - 1)
         # q = random.randint(a=0, b=self.num_nodes - 1)
         # while p == q:
         #     p = random.randint(a=0, b=self.num_nodes - 1)
         #     q = random.randint(a=0, b=self.num_nodes - 1)
-        p = random.randint(a=0, b=9)
-
+        # p = random.randint(a=0, b=self.num_nodes - 1)
+        item = episode_dir.split('/')
+        item = item[-1]
+        p = int(item) % self.num_nodes
         self.start_pos = list(self.points[p])
         self.end_pos = [23.4, 120.3]
         self.cur_pos = self.start_pos
@@ -273,18 +274,24 @@ class MyUAVgym(gym.Env):
         self.init_diff = self.last_diff
 
         # screenshot the start point image
+        self.episode_dir = episode_dir
+        self.start_path = episode_dir + '/' + str(self.step_num) + "," \
+                          + str(self.start_pos[0]) + "," + str(self.start_pos[1]) \
+                          + "," + str(self.cur_height) + '.png'
         self.start_pic = screenshot(self.paths, self.path_labels, self.start_pos[0], self.start_pos[1],
-                                    self.cur_height, self.image_augment)
+                                    self.cur_height, self.image_augment, self.start_path)
+        self.end_path = episode_dir + '/' + str(10000) + "," \
+                        + str(self.end_pos[0]) + "," + str(self.end_pos[1]) \
+                        + "," + str(self.cur_height) + '.png'
         self.end_pic = screenshot(self.paths, self.path_labels, self.end_pos[0], self.end_pos[1],
-                                  self.cur_height, self.image_augment)
+                                  self.cur_height, self.image_augment, self.end_path)
         self.cur_pic = self.start_pic
-
-        self.next_angles = []
+        self.cur_path = self.start_path
 
         self.step_num = 1
 
         state = self.get_img_input()
-        return state, self.labels
+        return state, [self.cur_path, self.end_path]
 
     def step(self, action):
         # 根据cur_pos, action计算下一步的cur_pos
@@ -326,22 +333,25 @@ class MyUAVgym(gym.Env):
             reward = reward1 + 10
 
         # 根据下一步cur_pos计算下一步state
+        self.cur_path = self.episode_dir + '/' + str(self.step_num) + "," \
+                        + str(self.cur_pos[0]) + "," + str(self.cur_pos[1]) \
+                        + "," + str(self.cur_height) + '.png'
         new_img = screenshot(self.paths, self.path_labels, self.cur_pos[0], self.cur_pos[1],
-                             self.cur_height, self.image_augment)
+                             self.cur_height, self.image_augment, self.cur_path)
         if type(new_img) is list:
             self.cur_pic = new_img[0]
             state = self.get_img_input()
 
             self.step_num += 1
             info = {}
-            return state, self.labels, reward1 - 10, True, info, success, success_diff
+            return state, [self.cur_path, self.end_path], reward1 - 10, True, info, success, success_diff
         else:
             self.cur_pic = new_img
             state = self.get_img_input()
 
             self.step_num += 1
             info = {}
-            return state, self.labels, reward, done, info, success, success_diff
+            return state, [self.cur_path, self.end_path], reward, done, info, success, success_diff
 
     def render(self, mode='human'):
         pass

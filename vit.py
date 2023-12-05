@@ -200,6 +200,7 @@ class Critic(nn.Module):
     def forward(self, img):
         return self.critic(img)
 
+
 # if __name__ == '__main__':
 #     model = Actor()
 #     flops, params = profile(model, (torch.randn(2, 3, 256, 256), ))

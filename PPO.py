@@ -3,6 +3,8 @@ import torch
 import torch.nn as nn
 from torch.distributions import MultivariateNormal
 from torch.distributions import Categorical
+
+from dataset import UAVdataset
 from vit import Actor, Critic
 
 ################################## set device ##################################
@@ -22,7 +24,6 @@ print("=========================================================================
 class RolloutBuffer:
     def __init__(self):
         self.states = []
-        self.labels = []
         self.actions = []
         self.logprobs = []
         self.state_values = []
@@ -31,7 +32,6 @@ class RolloutBuffer:
 
     def clear(self):
         del self.states[:]
-        del self.labels[:]
         del self.actions[:]
         del self.logprobs[:]
         del self.state_values[:]
@@ -39,16 +39,16 @@ class RolloutBuffer:
         del self.is_terminals[:]
 
 
-def load_weight(backbone1, checkpoint_path):
-    backbone1_dict = backbone1.state_dict()
-    print("=> loading checkpoint '{}'".format(checkpoint_path))
-    checkpoint = torch.load(checkpoint_path, map_location="cpu")
-    print(checkpoint['best_acc1'])
-    state_dict = checkpoint['state_dict']
-    for key in backbone1_dict:
-        backbone1_dict[key] = state_dict["module." + key]
-    backbone1.load_state_dict(backbone1_dict)
-    print("=> loaded pre-trained model '{}'".format(checkpoint_path))
+# def load_weight(backbone1, checkpoint_path):
+#     backbone1_dict = backbone1.state_dict()
+#     print("=> loading checkpoint '{}'".format(checkpoint_path))
+#     checkpoint = torch.load(checkpoint_path, map_location="cpu")
+#     print(checkpoint['best_acc1'])
+#     state_dict = checkpoint['state_dict']
+#     for key in backbone1_dict:
+#         backbone1_dict[key] = state_dict["module." + key]
+#     backbone1.load_state_dict(backbone1_dict)
+#     print("=> loaded pre-trained model '{}'".format(checkpoint_path))
 
 
 class ActorCritic(nn.Module):
@@ -145,23 +145,27 @@ class ActorCritic(nn.Module):
 #     return normData
 
 
-# def transform_input(state):
+# def transform_input(old_states):
+#     input = None
 #     normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
 #                                      std=[0.229, 0.224, 0.225])
 #     val_transform = transforms.Compose([
 #         transforms.ToTensor(),
 #         normalize,
 #     ])
-#     cur_img = Image.open(state[0])
-#     cur_img = cur_img.convert('RGB')
-#     cur_img = val_transform(cur_img)
-#     cur_img = cur_img.unsqueeze(dim=0)
-#     end_img = Image.open(state[1])
-#     end_img = end_img.convert('RGB')
-#     end_img = val_transform(end_img)
-#     end_img = end_img.unsqueeze(dim=0)
-#     new_state = torch.cat((cur_img, end_img), dim=0)
-#     return new_state
+#     for state in old_states:
+#         cur_img = Image.open(state[0])
+#         cur_img = val_transform(cur_img)
+#         cur_img = cur_img.unsqueeze(dim=0)
+#         end_img = Image.open(state[1])
+#         end_img = val_transform(end_img)
+#         end_img = end_img.unsqueeze(dim=0)
+#         new_state = torch.cat((cur_img, end_img), dim=0).unsqueeze(dim=0)
+#         if input is None:
+#             input = new_state
+#         else:
+#             input = torch.cat((input, new_state), dim=0)
+#     return input
 
 
 class PPO:
@@ -217,15 +221,14 @@ class PPO:
             print("WARNING : Calling PPO::decay_action_std() on discrete action space policy")
         print("--------------------------------------------------------------------------------------------")
 
-    def select_action(self, state, labels):
+    def select_action(self, state, path_list):
 
         if self.has_continuous_action_space:
             with torch.no_grad():
                 state = torch.FloatTensor(state).to(device)
                 action, action_logprob, state_val, actor_label, critic_label = self.policy_old.act(state)
 
-            self.buffer.states.append(state)
-            self.buffer.labels.append(labels)
+            self.buffer.states.append(path_list)
             self.buffer.actions.append(action)
             self.buffer.logprobs.append(action_logprob)
             self.buffer.state_values.append(state_val)
@@ -242,6 +245,69 @@ class PPO:
             self.buffer.state_values.append(state_val)
 
             return action.item()
+
+    # def random_update(self, datasets_path):
+    #     # Monte Carlo estimate of returns
+    #     rewards = []
+    #     discounted_reward = 0
+    #     for reward, is_terminal in zip(reversed(self.buffer.rewards), reversed(self.buffer.is_terminals)):
+    #         if is_terminal:
+    #             discounted_reward = 0
+    #         discounted_reward = reward + (self.gamma * discounted_reward)
+    #         rewards.insert(0, discounted_reward)
+    #
+    #     # Normalizing the rewards
+    #     rewards = torch.tensor(rewards, dtype=torch.float32).to(device)
+    #     rewards = (rewards - rewards.mean()) / (rewards.std() + 1e-7)
+    #
+    #     # convert list to tensor
+    #     old_actions = torch.squeeze(torch.stack(self.buffer.actions, dim=0)).detach().to(device)
+    #     old_logprobs = torch.squeeze(torch.stack(self.buffer.logprobs, dim=0)).detach().to(device)
+    #     old_state_values = torch.squeeze(torch.stack(self.buffer.state_values, dim=0)).detach().to(device)
+    #
+    #     # calculate advantages
+    #     advantages = rewards.detach() - old_state_values.detach()
+    #
+    #     batch_list = os.listdir(datasets_path)
+    #     batch_list.sort(key=lambda x: int(x[:-3]))
+    #     random_i = random.randint(a=0, b=len(batch_list) - 1)
+    #
+    #     index = 0
+    #     for i in range(0, len(batch_list)):
+    #         full_batch_dir = os.path.join(datasets_path, batch_list[i])
+    #         old_states = torch.load(full_batch_dir)
+    #         old_states = old_states.to(device).to(dtype=torch.float32)
+    #         start = index
+    #         end = index + old_states.size(0)
+    #         index = end
+    #
+    #         if i < random_i:
+    #             continue
+    #         if i > random_i:
+    #             break
+    #
+    #         logprobs, state_values, dist_entropy, actor_label, critic_label = \
+    #             self.policy.evaluate(old_states, old_actions[start: end])
+    #
+    #         # match state_values tensor dimensions with rewards tensor
+    #         state_values = torch.squeeze(state_values)
+    #
+    #         # Finding the ratio (pi_theta / pi_theta__old)
+    #         # e^(logp - logq) = e^(log(p/q)) = p/q
+    #         ratios = torch.exp(logprobs - old_logprobs[start: end].detach())
+    #
+    #         # Finding Surrogate Loss
+    #         surr1 = ratios * advantages[start: end]
+    #         surr2 = torch.clamp(ratios, 1 - self.eps_clip, 1 + self.eps_clip) * advantages[start: end]
+    #
+    #         # final loss of clipped objective PPO
+    #         loss = -torch.min(surr1, surr2) + 0.5 * self.MseLoss(state_values, rewards[start: end]) \
+    #                - 0.01 * dist_entropy
+    #
+    #         # take gradient step
+    #         self.optimizer.zero_grad()
+    #         loss.mean().backward()
+    #         self.optimizer.step()
 
     def update(self, datasets_path):
         # Monte Carlo estimate of returns
@@ -265,8 +331,12 @@ class PPO:
         # calculate advantages
         advantages = rewards.detach() - old_state_values.detach()
 
-        batch_list = os.listdir(datasets_path)
-        batch_list.sort(key=lambda x: int(x[:-3]))
+        # batch_list = os.listdir(datasets_path)
+        # batch_list.sort(key=lambda x: int(x[:-3]))
+        train_dataset = UAVdataset(self.buffer.states)
+        train_loader = torch.utils.data.DataLoader(
+            train_dataset, batch_size=self.batch_size, shuffle=False,
+            num_workers=8, pin_memory=True, drop_last=False)
 
         # Optimize policy for K epochs
         for epoch_i in range(self.K_epochs):
@@ -293,9 +363,7 @@ class PPO:
             # self.optimizer.step()
             total_loss = 0
             index = 0
-            for i in range(0, len(batch_list)):
-                full_batch_dir = os.path.join(datasets_path, batch_list[i])
-                old_states = torch.load(full_batch_dir)
+            for i, old_states in enumerate(train_loader):
                 old_states = old_states.to(device).to(dtype=torch.float32)
                 start = index
                 end = index + old_states.size(0)
@@ -351,5 +419,5 @@ class PPO:
 
 
 if __name__ == '__main__':
-    state_dict = torch.load("PPO_preTrained/UAVnavigation/PPO_UAVnavigation_0_5_best.pth")
+    state_dict = torch.load("PPO_preTrained/UAVnavigation/PPO_UAVnavigation_0_8_best.pth")
     print(state_dict)

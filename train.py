@@ -19,10 +19,12 @@ def train():
     env_name = "UAVnavigation"
     has_continuous_action_space = True  # continuous action space; else discrete
 
-    max_ep_len = 512  # max timesteps in one episode
-    update_timestep = 100  # update policy every n timesteps
+    num_nodes = 20
+    radius = 5000
+    max_ep_len = 768  # max timesteps in one episode
+    update_timestep = 200  # update policy every n timesteps
     batch_size = 128
-    run_num = 4
+    run_num = 9
     random_seed = 0  # set random seed if required (0 = no random seed)
 
     max_training_timesteps = int(6e6)  # break training loop if timeteps > max_training_timesteps
@@ -53,8 +55,8 @@ def train():
 
     print("training environment name : " + env_name)
 
-    env = MyUAVgym(len=6, bigmap_dir="../../../mnt/nfs/wyx/bigmap", num_nodes=10, dis=200,
-                   done_thresh=100, max_step_num=max_ep_len)
+    env = MyUAVgym(bigmap_dir="../../../mnt/nfs/wyx/bigmap", num_nodes=num_nodes, radius=radius,
+                   dis=200, done_thresh=100, max_step_num=max_ep_len)
 
     # state space dimension
     state_dim = env.observation_space.shape[0]
@@ -177,8 +179,8 @@ def train():
     time_step = 0
     i_episode = 0
     best_acc = 0
-    batch_index = 0
-    datasets_path = "datasets" + str(run_num)
+    # batch_index = 0
+    datasets_path = "../../../mnt/nfs/wyx/ppo/datasets" + str(run_num)
     if os.path.exists(datasets_path) is True:
         del_file(datasets_path)
 
@@ -187,13 +189,17 @@ def train():
         if os.path.exists(datasets_path) is False:
             os.mkdir(datasets_path)
 
-        state, labels = env.reset()
+        episode_dir = datasets_path + "/" + str(i_episode)
+        if os.path.exists(episode_dir) is False:
+            os.mkdir(episode_dir)
+
+        state, path_list = env.reset(episode_dir=episode_dir)
         current_ep_reward = 0
 
         for t in range(1, max_ep_len):
             # select action with policy
-            action = ppo_agent.select_action(state, labels)
-            state, labels, reward, done, _, success, success_diff = env.step(action)
+            action = ppo_agent.select_action(state, path_list)
+            state, path_list, reward, done, _, success, success_diff = env.step(action)
             total_success_num += success
             if success == 1:
                 total_success_diff += success_diff
@@ -205,12 +211,12 @@ def train():
             time_step += 1
             current_ep_reward += reward
 
-            if time_step % batch_size == 0:
-                batch_dir = datasets_path + "/" + str(batch_index) + ".pt"
-                batch_index += 1
-                state_buffer = torch.stack(ppo_agent.buffer.states, dim=0)
-                torch.save(state_buffer, batch_dir)
-                ppo_agent.buffer.states.clear()
+            # if time_step % batch_size == 0:
+            #     batch_dir = datasets_path + "/" + str(batch_index) + ".pt"
+            #     batch_index += 1
+            #     state_buffer = torch.stack(ppo_agent.buffer.states, dim=0)
+            #     torch.save(state_buffer, batch_dir)
+            #     ppo_agent.buffer.states.clear()
 
             # break; if the episode is over
             if done:
@@ -282,15 +288,15 @@ def train():
             print("--------------------------------------------------------------------------------------------")
 
         if i_episode % update_timestep == 0:
-            if len(ppo_agent.buffer.states) > 0:
-                batch_dir = datasets_path + "/" + str(batch_index) + ".pt"
-                batch_index += 1
-                state_buffer = torch.stack(ppo_agent.buffer.states, dim=0)
-                torch.save(state_buffer, batch_dir)
-                ppo_agent.buffer.states.clear()
+            # if len(ppo_agent.buffer.states) > 0:
+            #     batch_dir = datasets_path + "/" + str(batch_index) + ".pt"
+            #     batch_index += 1
+            #     state_buffer = torch.stack(ppo_agent.buffer.states, dim=0)
+            #     torch.save(state_buffer, batch_dir)
+            #     ppo_agent.buffer.states.clear()
             ppo_agent.update(datasets_path)
             del_file(datasets_path)
-            batch_index = 0
+            # batch_index = 0
 
         # if continuous action space; then decay action std of ouput action distribution
         if has_continuous_action_space and i_episode % action_std_decay_freq == 0:
