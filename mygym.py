@@ -1,53 +1,40 @@
 import os
 import random
-
+from io import BytesIO
+import cv2
 import gym
 import math
 import numpy as np
 import torch
 from PIL import Image
 from gym import spaces
-from skimage.color import rgb2gray
 from torchvision import transforms
-
 from data_augment import ImageAugment
+from cor import *
 
 
-def get_start_end(num_nodes, radius, center_lat=23.4, center_lon=120.3,):
-    points = []
-    # 计算每个点之间的角度间隔
-    angle_step = 2 * math.pi / num_nodes
+def dfs_compress(pic_path, out_path, target_size=199, quality=90, step=5, pic_type='.jpg'):
+    # read images bytes
+    with open(pic_path, 'rb') as f:
+        pic_byte = f.read()
 
-    # 生成坐标点
-    for i in range(0, num_nodes):
-        angle = i * angle_step
-        lat = round(center_lat + radius * math.sin(angle) / 111000, 8)
-        lon = round(center_lon + radius * math.cos(angle) / 111000 / math.cos(lat / 180 * math.pi), 8)
-        # 添加到坐标集合
-        points.append((lat, lon))
-    return points
+    img_np = np.frombuffer(pic_byte, np.uint8)
+    img_cv = cv2.imdecode(img_np, cv2.IMREAD_ANYCOLOR)
 
+    current_size = len(pic_byte) / 1024
+    # print("image size before compression (KB): ", current_size)
+    while current_size > target_size:
+        pic_byte = cv2.imencode(pic_type, img_cv, [int(cv2.IMWRITE_JPEG_QUALITY), quality])[1]
+        if quality - step < 0:
+            break
+        quality -= step
+        current_size = len(pic_byte) / 1024
 
-def get_big_map(path):
-    """
-    get the big map stored on the UAV locally
-    :param path: stored path
-    :return: big map paths and center coordinates
-    """
-    paths = []
-    labels = []
+    # save image
+    with open(out_path, 'wb') as f:
+        f.write(BytesIO(pic_byte).getvalue())
 
-    file_path = os.listdir(path)
-    file_path.sort()
-
-    for file in file_path:
-        full_file_path = os.path.join(path, file)
-        paths.append(full_file_path)
-        file = file[:-4]
-        file = file.split(',')
-        labels.append(list(map(eval, [file[0], file[1]])))
-
-    return paths, labels
+    return len(pic_byte) / 1024
 
 
 def screenshot(paths, labels, new_lat, new_lon, cur_height, img_aug, path):
@@ -80,6 +67,7 @@ def screenshot(paths, labels, new_lat, new_lon, cur_height, img_aug, path):
     lat_pixel_dis = lat_dis * 1.4
     lon_pixel_dis = lon_dis * 1.4
     center = [1400 // 2, 1400 // 2]
+    # 截图中心点的像素偏移量
     new_lat_pixel = center[0] - lat_pixel_dis
     new_lon_pixel = center[1] + lon_pixel_dis
 
@@ -88,13 +76,13 @@ def screenshot(paths, labels, new_lat, new_lon, cur_height, img_aug, path):
     pixel_h = cur_height / 580 * 420
     pixel_w = pixel_h
     # # If the center of the new image is out of bounds
-    # if new_lon_pixel - pixel_w // 2 > 1400:
+    # if new_lat_pixel + pixel_h // 2 < 0:
     #     return -1
     # if new_lat_pixel - pixel_h // 2 > 1400:
     #     return -1
     # if new_lon_pixel + pixel_w // 2 < 0:
     #     return -1
-    # if new_lat_pixel + pixel_h // 2 < 0:
+    # if new_lon_pixel - pixel_w // 2 > 1400:
     #     return -1
 
     pic = Image.open(paths[idx])
@@ -103,12 +91,13 @@ def screenshot(paths, labels, new_lat, new_lon, cur_height, img_aug, path):
     pic = pic.resize((256, 256))
     # pic = pic.rotate(90 - ang)
 
-    # # add style noise to the new image
-    # pic = np.array(pic)
-    # pic = img_aug(pic)
-    # pic = Image.fromarray(pic)
     pic = pic.convert('RGB')
+    # add style noise to the new image
+    pic = np.array(pic)
+    pic = img_aug(pic)
+    pic = Image.fromarray(pic)
     pic.save(path)
+    dfs_compress(path, path, target_size=10)
 
     normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                      std=[0.229, 0.224, 0.225])
@@ -122,19 +111,19 @@ def screenshot(paths, labels, new_lat, new_lon, cur_height, img_aug, path):
     # # new screenshot image
     # return pic
     # If the center of the new image is out of bounds
-    if new_lon_pixel - pixel_w // 2 > 1400:
+    if new_lat_pixel + pixel_h // 2 < 0:
         return [pic, -1]
     if new_lat_pixel - pixel_h // 2 > 1400:
         return [pic, -1]
     if new_lon_pixel + pixel_w // 2 < 0:
         return [pic, -1]
-    if new_lat_pixel + pixel_h // 2 < 0:
+    if new_lon_pixel - pixel_w // 2 > 1400:
         return [pic, -1]
     return pic
 
 
 class MyUAVgym(gym.Env):
-    def __init__(self, bigmap_dir, num_nodes, radius, dis, done_thresh, max_step_num):
+    def __init__(self, dis, done_thresh, max_step_num, points, paths, path_labels):
         self.action_space = spaces.Box(low=-1.0, high=+1.0, shape=(2,), dtype=np.float32)
         self.observation_space = spaces.Box(low=-1.0, high=+1.0, shape=(2, 3, 256, 256,), dtype=np.float32)
         self.start_pos = []
@@ -147,168 +136,103 @@ class MyUAVgym(gym.Env):
         self.end_path = ""
         self.cur_path = ""
         self.last_diff = 0
-        self.init_diff = 0
-        self.next_angles = []
 
-        self.bigmap_dir = bigmap_dir
-        self.num_nodes = num_nodes
         self.dis = dis
         self.done_thresh = done_thresh
         self.max_step_num = max_step_num
-        self.points = get_start_end(num_nodes=num_nodes, radius=radius)
-        self.paths, self.path_labels = get_big_map(path=self.bigmap_dir)
+        self.points = points
+        self.paths = paths
+        self.path_labels = path_labels
 
-        self.HEIGHT_NOISE = {100: 25, 150: 25, 200: 25, 250: 50, 300: 50}
+        self.HEIGHT_NOISE = HEIGHT_NOISE
         self.height = 100
         self.cur_height = 100
-        self.NOISE_DB = [["ori", "ori"], ["ori", "random"],
-                         # ["cutout", "ori"], ["rain", "ori"],
-                         # ["snow", "ori"], ["fog", "ori"], ["bright", "ori"],
-                         # ["cutout", "random"], ["rain", "random"],
-                         # ["snow", "random"], ["fog", "random"], ["bright", "random"]
-                         ]
+        self.NOISE_DB = NOISE_DB
+        self.noise_index = 0
         self.step_num = 0
         self.image_augment = None
         self.episode_dir = ""
 
-    # def get_input(self):
-    #     normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
-    #                                      std=[0.229, 0.224, 0.225])
-    #     val_transform = transforms.Compose([
-    #         transforms.Resize(256),
-    #         transforms.CenterCrop((256, 256)),
-    #         transforms.ToTensor(),
-    #         normalize,
-    #     ])
-    #
-    #     # slice to avoid modifying the original list
-    #     cur_pic = self.cur_pic[:]
-    #     next_angles = self.next_angles[:]
-    #
-    #     next_imgs = None
-    #
-    #     # original images and angles
-    #     for i in range(0, len(cur_pic)):
-    #         img = cur_pic[i]
-    #         # img = Image.open(img)
-    #         img = img.convert('RGB')
-    #         img = val_transform(img).unsqueeze(dim=0)
-    #         if next_imgs is None:
-    #             next_imgs = img
-    #         else:
-    #             next_imgs = torch.cat((next_imgs, img), dim=0)
-    #     next_angles.append([0, 0])
-    #
-    #     # append the end point frame as part of model input
-    #     # dest_img = Image.open(self.end_pic)
-    #     dest_img = self.end_pic.convert('RGB')
-    #     dest_img = val_transform(dest_img).unsqueeze(dim=0)
-    #     next_imgs = torch.cat((next_imgs, dest_img), dim=0)
-    #
-    #     dest_angle = [0, 0]
-    #     next_angles.append(dest_angle)
-    #     next_angles = torch.tensor(next_angles, dtype=torch.float)
-    #
-    #     # if there are not enough input frames
-    #     for i in range(0, self.len - 1 - len(cur_pic)):
-    #         next_imgs = torch.cat((next_imgs, torch.zeros((1, 3, 256, 256))), dim=0)
-    #         next_angles = torch.cat((next_angles, torch.zeros((1, 2))), dim=0)
-    #
-    #     # add a batch dimension
-    #     return next_imgs.unsqueeze(dim=0), next_angles.unsqueeze(dim=0)
-
     def get_img_input(self):
         return torch.cat((self.cur_pic, self.end_pic), dim=0)
 
-    # def get_labels(self):
-    #     # 因为backbone输出的是一个图像归一化的坐标，而不是两个图像一起归一化的坐标，所以奖励无法上升
-    #     pos1 = self.cur_pos[:]
-    #     pos1.extend(self.end_pos[:])
-    #     pos1[0] -= 23.55
-    #     pos1[0] *= 100
-    #     pos1[1] -= 120.3
-    #     pos1[1] *= 100
-    #     pos1[2] -= 23.55
-    #     pos1[2] *= 100
-    #     pos1[3] -= 120.3
-    #     pos1[3] *= 100
-    #
-    #     self.labels = torch.tensor(pos1, dtype=torch.float32)
+    def reset(self, dataset_dir, index):
+        i = index % len(self.points)
+        # 选择初始起点终点高度
+        self.start_pos = self.points[i][0]
+        self.end_pos = self.points[i][1]
+        self.height = self.points[i][2]
+        self.noise_index = self.points[i][3]
+        self.test_num = self.points[i][4]
 
-    # def get_pos_input(self):
-    #     state = self.cur_pos[:]
-    #     state.extend(self.end_pos)
-    #     return state
+        self.episode_dir = dataset_dir + "path" + str(i) + str(",") \
+                           + "height" + str(self.height) + "," \
+                           + self.NOISE_DB[self.noise_index][0] + "-" + self.NOISE_DB[self.noise_index][1] + "," \
+                           + str(self.test_num)
+        if os.path.exists(self.episode_dir) is False:
+            os.makedirs(self.episode_dir, exist_ok=True)
 
-    def reset(self, episode_dir):
-        # p = random.randint(a=0, b=self.num_nodes - 1)
-        # q = random.randint(a=0, b=self.num_nodes - 1)
-        # while p == q:
-        #     p = random.randint(a=0, b=self.num_nodes - 1)
-        #     q = random.randint(a=0, b=self.num_nodes - 1)
-        # p = random.randint(a=0, b=self.num_nodes - 1)
-        item = episode_dir.split('/')
-        item = item[-1]
-        p = int(item) % self.num_nodes
-        self.start_pos = list(self.points[p])
-        self.end_pos = [23.4, 120.3]
-        self.cur_pos = self.start_pos
+        # 1
+        last_lat = self.start_pos[0] + random.uniform(a=-1, b=1) * self.HEIGHT_NOISE[self.height] / 111000
+        last_lon = self.start_pos[1] + random.uniform(a=-1, b=1) * self.HEIGHT_NOISE[self.height] / 111000 \
+                   / math.cos(last_lat / 180 * math.pi)
+        self.cur_pos = [last_lat, last_lon]
 
-        # keys = list(self.HEIGHT_NOISE.keys())
-        # k_index = random.randint(a=0, b=len(keys) - 1)
-        # self.height = keys[k_index]
+        # 无噪声版本：起点的位置加噪声，高度不加噪声
+        # 终点的位置不加噪声，高度不加噪声
+        # 中间位置不加噪声，高度不加噪声
+        # 位置噪声版本：起点的位置加噪声，高度加噪声
+        # 终点的位置不加噪声，高度不加噪声
+        # 中间位置加噪声，高度加噪声
+        # 天气+位置噪声版本：起点的位置加噪声，高度加噪声，外观加噪声
+        # 终点的位置不加噪声，高度不加噪声，外观加噪声
+        # 中间位置加噪声，高度加噪声，外观加噪声
+        # 2
+        self.image_augment = ImageAugment(style_idx=self.NOISE_DB[self.noise_index][0],
+                                          shift_idx=self.NOISE_DB[self.noise_index][1])
+        shift = self.image_augment.forward_shift(self.HEIGHT_NOISE[self.height])
+        self.cur_height = self.height + shift[2]
 
-        # noise_db_index = random.randint(a=0, b=len(self.NOISE_DB) - 1)
-        # # choose a kind of noise
-        # self.image_augment = ImageAugment(style_idx=self.NOISE_DB[noise_db_index][0],
-        #                                   shift_idx=self.NOISE_DB[noise_db_index][1])
-        # shift = self.image_augment.forward_shift(self.HEIGHT_NOISE[self.height])
-        # self.start_pos[0] += shift[0]
-        # self.start_pos[1] += shift[1]
-        # self.cur_height = self.height + shift[2]
-        # self.cur_pos = self.start_pos
-
+        # 3
         lat_diff = (self.end_pos[0] - self.cur_pos[0]) * 111000
         lon_diff = (self.end_pos[1] - self.cur_pos[1]) * 111000 * math.cos(self.cur_pos[0] / 180 * math.pi)
         self.last_diff = math.sqrt(lat_diff * lat_diff + lon_diff * lon_diff)
-        self.init_diff = self.last_diff
 
         # screenshot the start point image
-        self.episode_dir = episode_dir
-        self.start_path = episode_dir + '/' + str(self.step_num) + "," \
-                          + str(self.start_pos[0]) + "," + str(self.start_pos[1]) \
-                          + "," + str(self.cur_height) + '.png'
-        self.start_pic = screenshot(self.paths, self.path_labels, self.start_pos[0], self.start_pos[1],
-                                    self.cur_height, self.image_augment, self.start_path)
-        self.end_path = episode_dir + '/' + str(10000) + "," \
-                        + str(self.end_pos[0]) + "," + str(self.end_pos[1]) \
+        # 4
+        self.cur_path = self.episode_dir + '/' + str(self.step_num) + "," \
+                        + str(self.cur_pos[0]) + "," + str(self.cur_pos[1]) \
                         + "," + str(self.cur_height) + '.png'
+        self.cur_pic = screenshot(self.paths, self.path_labels, self.cur_pos[0], self.cur_pos[1],
+                                  self.cur_height, self.image_augment, self.cur_path)
+        self.end_path = self.episode_dir + '/' + str(10000) + "," \
+                        + str(self.end_pos[0]) + "," + str(self.end_pos[1]) \
+                        + "," + str(self.height) + '.png'
         self.end_pic = screenshot(self.paths, self.path_labels, self.end_pos[0], self.end_pos[1],
-                                  self.cur_height, self.image_augment, self.end_path)
-        self.cur_pic = self.start_pic
-        self.cur_path = self.start_path
+                                  self.height, self.image_augment, self.end_path)
 
         self.step_num = 1
 
         state = self.get_img_input()
-        return state, [self.cur_path, self.end_path]
+        return state, [self.cur_path, self.end_path], self.episode_dir
 
     def step(self, action):
         # 根据cur_pos, action计算下一步的cur_pos
-        lat_delta = self.dis * action[0]
-        lon_delta = self.dis * action[1]
-        lat_delta = float(lat_delta / 111000)
-        lon_delta = float(lon_delta / 111000 / math.cos(self.cur_pos[0] / 180 * math.pi))
+        # 1
+        lat_delta = float(self.dis * action[0] / 111000)
+        lon_delta = float(self.dis * action[1] / 111000 / math.cos(self.cur_pos[0] / 180 * math.pi))
         self.cur_pos[0] += lat_delta
         self.cur_pos[1] += lon_delta
 
-        # # add shift noise to the origin position
-        # shift = self.image_augment.forward_shift(self.HEIGHT_NOISE[self.height])
-        # self.cur_pos[0] += shift[0]
-        # self.cur_pos[1] += shift[1]
-        # self.cur_height = self.height + shift[2]
+        # add shift noise to the origin position
+        # 2
+        shift = self.image_augment.forward_shift(self.HEIGHT_NOISE[self.height])
+        self.cur_pos[0] += shift[0]
+        self.cur_pos[1] += shift[1]
+        self.cur_height = self.height + shift[2]
 
         # 根据下一步cur_pos, end计算done
+        # 3
         lat_diff = (self.end_pos[0] - self.cur_pos[0]) * 111000
         lon_diff = (self.end_pos[1] - self.cur_pos[1]) * 111000 * math.cos(self.cur_pos[0] / 180 * math.pi)
         diff = math.sqrt(lat_diff * lat_diff + lon_diff * lon_diff)
@@ -320,7 +244,7 @@ class MyUAVgym(gym.Env):
         reward1 = - (diff - self.last_diff) / self.dis
         self.last_diff = diff
         reward = reward1
-        # 成功到达终点额外加100奖励
+        # 成功到达终点额外加10奖励
         success = 0
         success_diff = 0
         if diff <= self.done_thresh and self.step_num <= self.max_step_num - 1:
@@ -328,11 +252,12 @@ class MyUAVgym(gym.Env):
                   + str(self.step_num) + " / " + str(self.last_diff // self.dis))
             # print("origin end point pos:" + str(self.end_pos[0]) + "," + str(self.end_pos[1]))
             # print("actual end point pos:" + str(self.cur_pos[0]) + "," + str(self.cur_pos[1]))
+            reward = reward1 + 10
             success = 1
             success_diff = diff
-            reward = reward1 + 10
 
         # 根据下一步cur_pos计算下一步state
+        # 4
         self.cur_path = self.episode_dir + '/' + str(self.step_num) + "," \
                         + str(self.cur_pos[0]) + "," + str(self.cur_pos[1]) \
                         + "," + str(self.cur_height) + '.png'
@@ -343,15 +268,13 @@ class MyUAVgym(gym.Env):
             state = self.get_img_input()
 
             self.step_num += 1
-            info = {}
-            return state, [self.cur_path, self.end_path], reward1 - 10, True, info, success, success_diff
+            return state, [self.cur_path, self.end_path], reward1 - 10, True, {}, success, success_diff
         else:
             self.cur_pic = new_img
             state = self.get_img_input()
 
             self.step_num += 1
-            info = {}
-            return state, [self.cur_path, self.end_path], reward, done, info, success, success_diff
+            return state, [self.cur_path, self.end_path], reward, done, {}, success, success_diff
 
     def render(self, mode='human'):
         pass

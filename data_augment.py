@@ -17,16 +17,16 @@ class ImageAugment(nn.Module):
         self.style_idx = style_idx
         self.shift_idx = shift_idx
 
-        if style_idx == "bright":
-            self.style = iaa.imgcorruptlike.Brightness()
+        if style_idx == "cutout":
+            self.style = iaa.Cutout(nb_iterations=(1, 3), size=(0.1, 0.3))
         elif style_idx == "rain":
             self.style = iaa.Rain()
         elif style_idx == "snow":
             self.style = iaa.Snowflakes()
         elif style_idx == "fog":
             self.style = iaa.Fog()
-        elif style_idx == "cutout":
-            self.style = iaa.Cutout(size=0.2)
+        elif style_idx == "bright":
+            self.style = iaa.imgcorruptlike.Brightness()
         else:
             self.style = None
 
