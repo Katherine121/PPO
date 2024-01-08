@@ -16,6 +16,13 @@
           </advancedOptions>
         </fileTransfer>
       </webServer>
+      <webServer id="0f83d9cb-47b6-417e-8b60-5df4291892b2" name="135">
+        <fileTransfer accessType="SFTP" host="10.214.211.135" port="18022" sshConfigId="b4e9dc6a-611a-45a1-9744-35c7fdf59455" sshConfig="wyx@10.214.211.135:18022 agent" authAgent="true">
+          <advancedOptions>
+            <advancedOptions dataProtectionLevel="Private" passiveMode="true" shareSSLContext="true" />
+          </advancedOptions>
+        </fileTransfer>
+      </webServer>
     </option>
   </component>
 </project>

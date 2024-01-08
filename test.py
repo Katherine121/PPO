@@ -117,5 +117,45 @@ def test():
 
 
 if __name__ == '__main__':
+    dataset_dir = "../../../mnt/nfs/wyx/ppo/datasets17/"
+    episode_dirs = os.listdir(dataset_dir)
+    episode_dirs.sort(key=lambda x: int(x[4:x.find(',')]))
+    cutout = 0
+    rain = 0
+    snow = 0
+    fog = 0
+    bright = 0
+    origin = 0
+    random = 0
+    for episode_dir in episode_dirs:
+        full_episode_dir = os.path.join(dataset_dir, episode_dir)
+        full_reward_file = os.path.join(full_episode_dir, "reward.txt")
 
-    test()
+        f2 = open(full_reward_file, 'rt')
+        for line in f2:
+            line = line.strip('\n')
+            line = line.split(' ')
+            is_terminal = True if int(line[1]) == 1 else False
+            if float(line[0]) >= 10.0 and is_terminal == True:
+                if "cutout" in episode_dir:
+                    cutout += 1
+                elif "rain" in episode_dir:
+                    rain += 1
+                elif "snow" in episode_dir:
+                    snow += 1
+                elif "bright" in episode_dir:
+                    bright += 1
+                elif "fog" in episode_dir:
+                    fog += 1
+                elif "ori" in episode_dir:
+                    origin += 1
+        f2.close()
+
+    print("cutout:", cutout)
+    print("rain:", rain)
+    print("snow:", snow)
+    print("fog:", fog)
+    print("bright:", bright)
+    print("origin:", origin)
+
+    # test()

@@ -1,6 +1,3 @@
-import os
-
-import numpy as np
 import torch
 from PIL import Image
 from torch.utils.data import Dataset
@@ -17,6 +14,7 @@ class UAVdataset(Dataset):
         normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                          std=[0.229, 0.224, 0.225])
         self.val_transform = transforms.Compose([
+            transforms.Resize((256, 256)),
             transforms.ToTensor(),
             normalize,
         ])

@@ -70,8 +70,8 @@ def save_graph(run_num):
         data_avg['reward_smooth'] = data_avg['reward'].rolling(window=window_len_smooth, win_type='triang', min_periods=min_window_len_smooth).mean()
         data_avg['reward_var'] = data_avg['reward'].rolling(window=window_len_var, win_type='triang', min_periods=min_window_len_var).mean()
 
-        data_avg.plot(kind='line', x='timestep' , y='reward_smooth',ax=ax,color=colors[0],  linewidth=linewidth_smooth, alpha=alpha_smooth)
-        data_avg.plot(kind='line', x='timestep' , y='reward_var',ax=ax,color=colors[0],  linewidth=linewidth_var, alpha=alpha_var)
+        data_avg.plot(kind='line', x='episode' , y='reward_smooth',ax=ax,color=colors[0],  linewidth=linewidth_smooth, alpha=alpha_smooth)
+        data_avg.plot(kind='line', x='episode' , y='reward_var',ax=ax,color=colors[0],  linewidth=linewidth_var, alpha=alpha_var)
 
         # keep only reward_smooth in the legend and rename it
         handles, labels = ax.get_legend_handles_labels()
@@ -84,8 +84,8 @@ def save_graph(run_num):
             run['reward_var_' + str(i)] = run['reward'].rolling(window=window_len_var, win_type='triang', min_periods=min_window_len_var).mean()
 
             # plot the lines
-            run.plot(kind='line', x='timestep' , y='reward_smooth_' + str(i),ax=ax,color=colors[i % len(colors)],  linewidth=linewidth_smooth, alpha=alpha_smooth)
-            run.plot(kind='line', x='timestep' , y='reward_var_' + str(i),ax=ax,color=colors[i % len(colors)],  linewidth=linewidth_var, alpha=alpha_var)
+            run.plot(kind='line', x='episode' , y='reward_smooth_' + str(i),ax=ax,color=colors[i % len(colors)],  linewidth=linewidth_smooth, alpha=alpha_smooth)
+            run.plot(kind='line', x='episode' , y='reward_var_' + str(i),ax=ax,color=colors[i % len(colors)],  linewidth=linewidth_var, alpha=alpha_var)
 
         # keep alternate elements (reward_smooth_i) in the legend
         handles, labels = ax.get_legend_handles_labels()
@@ -102,7 +102,7 @@ def save_graph(run_num):
 
     ax.grid(color='gray', linestyle='-', linewidth=1, alpha=0.2)
 
-    ax.set_xlabel("Timesteps", fontsize=12)
+    ax.set_xlabel("Episodes", fontsize=12)
     ax.set_ylabel("Rewards", fontsize=12)
 
     plt.title(env_name, fontsize=14)
@@ -119,9 +119,5 @@ def save_graph(run_num):
 
 
 if __name__ == '__main__':
-    # save_graph(3)
-    # save_graph(4)
-    save_graph(6)
-    # save_graph(6)
-    # save_graph(7)
-    # save_graph(8)
+    save_graph(14)
+    save_graph(15)

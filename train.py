@@ -1,5 +1,4 @@
 import os
-import random
 import shutil
 import math
 import torch
@@ -25,7 +24,7 @@ def del_file(path):
                 shutil.rmtree(path_file)
 
 
-def get_start_end(num_nodes, radius, test_num, center_lat=23.4, center_lon=120.3,):
+def get_start_end(num_nodes, radius, test_num, center_lat=23.4, center_lon=120.3, ):
     points = []
     res = []
     # 计算每个点之间的角度间隔
@@ -39,33 +38,18 @@ def get_start_end(num_nodes, radius, test_num, center_lat=23.4, center_lon=120.3
         # 添加到坐标集合
         points.append((lat, lon))
 
+    # num_nodes
     for i in range(int(0 * len(points)), int(1 * len(points))):
         start_point = points[i]
         end_point = [center_lat, center_lon]
 
-        # 5个高度
+        # 高度
         for h_key in HEIGHT_NOISE.keys():
-            for index in range(0, test_num):
-                # 原始
-                res.append((start_point, end_point, h_key, 0, index))
-            for index in range(0, test_num):
-                # 位置噪声
-                res.append((start_point, end_point, h_key, 1, index))
-            for index in range(0, test_num):
-                # cutout+位置噪声
-                res.append((start_point, end_point, h_key, 2, index))
-            for index in range(0, test_num):
-                # rain+位置噪声
-                res.append((start_point, end_point, h_key, 3, index))
-            for index in range(0, test_num):
-                # snow+位置噪声
-                res.append((start_point, end_point, h_key, 4, index))
-            for index in range(0, test_num):
-                # fog+位置噪声
-                res.append((start_point, end_point, h_key, 5, index))
-            for index in range(0, test_num):
-                # bright+位置噪声
-                res.append((start_point, end_point, h_key, 6, index))
+            # 噪声数目
+            for noise_index in range(0, len(NOISE_DB)):
+                # 每一种噪声的测试路径数目
+                for index in range(0, test_num):
+                    res.append((start_point, end_point, h_key, noise_index, index))
 
     return res
 
@@ -94,19 +78,21 @@ def get_big_map(path):
 
 def train_thread(start_episode, end_episode):
     # 声明全局变量
-    global print_running_reward
-    global print_running_episodes
-    global log_running_reward
-    global log_running_episodes
+    # global time_step
+    # global print_running_episodes
+    # global log_running_reward
+    # global log_running_episodes
+    global ppo_agent
+    global time_step
     global total_success_num
     global total_success_diff
-    global time_step
+    global print_running_reward
     global i_episode
-    global ppo_agent
 
     env = MyUAVgym(dis=200, done_thresh=100, max_step_num=max_ep_len,
                    points=points, paths=paths, path_labels=path_labels)
-    env.seed(random_seed)
+    if random_seed:
+        env.seed(random_seed)
 
     # training loop
     for index in range(start_episode, end_episode):
@@ -122,14 +108,8 @@ def train_thread(start_episode, end_episode):
 
         for t in range(1, max_ep_len):
             # select action with policy
-            with ppo_agent_lock:
-                action = ppo_agent.select_action(state, path_list, episode_dir)
+            action = ppo_agent.select_action(state, path_list, episode_dir, ppo_agent_lock)
             state, path_list, reward, done, _, success, success_diff = env.step(action)
-            with total_success_num_lock:
-                total_success_num += success
-            with total_success_diff_lock:
-                if success == 1:
-                    total_success_diff += success_diff
 
             # # saving reward and is_terminals
             # ppo_agent.buffer.rewards.append(reward)
@@ -149,17 +129,10 @@ def train_thread(start_episode, end_episode):
             if done:
                 break
 
-        with print_running_reward_lock:
+        with variance_lock:
+            total_success_num += success
+            total_success_diff += success_diff
             print_running_reward += current_ep_reward
-        with print_running_episodes_lock:
-            print_running_episodes += 1
-
-        with log_running_reward_lock:
-            log_running_reward += current_ep_reward
-        with log_running_episodes_lock:
-            log_running_episodes += 1
-
-        with i_episode_lock:
             i_episode += 1
 
     env.close()
@@ -167,16 +140,22 @@ def train_thread(start_episode, end_episode):
 
 # ==============================================================================
 # 需要修改的参数
-run_num = 16
+run_num = 17
 num_nodes = 100
-radius = 3000
-max_ep_len = 512  # max timesteps in one episode
 
 test_num = 1  # 某一种起点、终点、高度、噪声对应的测试数目
 update_timestep = num_nodes * len(HEIGHT_NOISE) * len(NOISE_DB) * test_num  # update policy every n timesteps
 
+data = "../../../mnt/nfs/"
+
 batch_size = 128
+K_epochs = 30  # update policy for K epochs in one PPO update
+lr_actor = 0.0003  # learning rate for actor network
+
+radius = 3000
+max_ep_len = 512  # max timesteps in one episode
 max_thread_num = 8
+
 random_seed = 0  # set random seed if required (0 = no random seed)
 # ==============================================================================
 
@@ -184,21 +163,17 @@ random_seed = 0  # set random seed if required (0 = no random seed)
 # 不需要修改的参数
 env_name = "UAVnavigation"
 has_continuous_action_space = True  # continuous action space; else discrete
-bigmap_dir = "../../../mnt/nfs/wyx/bigmap"
+bigmap_dir = data + "wyx/bigmap"
 
 max_training_timesteps = 100 * update_timestep  # break training loop if timeteps > max_training_timesteps
-save_model_freq = 500  # save model frequency (in num timesteps)
 
 action_std = 0.6  # starting std for action distribution (Multivariate Normal)
 action_std_decay_rate = 0.05  # linearly decay action_std (action_std = action_std - action_std_decay_rate)
 min_action_std = 0.1  # minimum action_std (stop decay after action_std <= min_action_std)
 action_std_decay_freq = int(2.5e5 / max_ep_len)  # action_std decay frequency (in num timesteps)
 
-K_epochs = 30  # update policy for K epochs in one PPO update
 eps_clip = 0.2  # clip parameter for PPO
 gamma = 0.99  # discount factor
-
-lr_actor = 0.0003  # learning rate for actor network
 lr_critic = 0.001  # learning rate for critic network
 # ==============================================================================
 
@@ -213,11 +188,9 @@ if not os.path.exists(log_dir):
 
 #### create new log file for each run
 log_f_name = log_dir + '/PPO_' + env_name + "_log_" + str(run_num) + ".csv"
-#### create new log file for each run
 diff_f_name = log_dir + '/PPO_' + env_name + "_diff_" + str(run_num) + ".csv"
-#### create new log file for each run
 acc_f_name = log_dir + '/PPO_' + env_name + "_acc_" + str(run_num) + ".csv"
-
+print("--------------------------------------------------------------------------------------------")
 print("current logging run number for " + env_name + " : ", run_num)
 print("logging at : " + log_f_name)
 #####################################################
@@ -236,51 +209,46 @@ print("save checkpoint path : " + checkpoint_path)
 #####################################################
 
 ############# print all hyperparameters #############
-print("--------------------------------------------------------------------------------------------")
-print("max training timesteps : ", max_training_timesteps)
+print("num_nodes : ", num_nodes)
+print("test_num: ", test_num)
+print("PPO update frequency : " + str(update_timestep) + " timesteps")
+
+print("update batch size : ", batch_size)
+print("PPO K epochs : ", K_epochs)
+print("optimizer learning rate actor : ", lr_actor)
+
+print("radius : ", radius)
 print("max timesteps per episode : ", max_ep_len)
-print("model saving frequency : " + str(save_model_freq) + " timesteps")
+print("max thread num : ", max_thread_num)
+
+if random_seed:
+    print("setting random seed to ", random_seed)
+    torch.manual_seed(random_seed)
+    np.random.seed(random_seed)
+print("--------------------------------------------------------------------------------------------")
+
+print("max training timesteps : ", max_training_timesteps)
+
 if has_continuous_action_space:
     print("Initializing a continuous action space policy")
-    print("--------------------------------------------------------------------------------------------")
     print("starting std of action distribution : ", action_std)
     print("decay rate of std of action distribution : ", action_std_decay_rate)
     print("minimum std of action distribution : ", min_action_std)
     print("decay frequency of std of action distribution : " + str(action_std_decay_freq) + " timesteps")
 else:
     print("Initializing a discrete action space policy")
-print("--------------------------------------------------------------------------------------------")
-print("PPO update frequency : " + str(update_timestep) + " timesteps")
-print("PPO K epochs : ", K_epochs)
-print("update batch size : ", batch_size)
+
 print("PPO epsilon clip : ", eps_clip)
 print("discount factor (gamma) : ", gamma)
-print("--------------------------------------------------------------------------------------------")
-print("optimizer learning rate actor : ", lr_actor)
 print("optimizer learning rate critic : ", lr_critic)
-if random_seed:
-    print("--------------------------------------------------------------------------------------------")
-    print("setting random seed to ", random_seed)
-    torch.manual_seed(random_seed)
-    np.random.seed(random_seed)
 #####################################################
 
-print("============================================================================================")
 torch.autograd.set_detect_anomaly(True)
-################# training procedure ################
-
-# initialize a PPO agent
-ppo_agent = PPO(lr_actor, lr_critic, batch_size, gamma, K_epochs,
-                eps_clip, has_continuous_action_space, action_std)
-
-# track total training time
-start_time = datetime.now().replace(microsecond=0)
-print("Started training at (GMT) : ", start_time)
-
-print("============================================================================================")
 # reduce CPU usage, use it after the model is loaded onto the GPU
 torch.set_num_threads(1)
 cudnn.benchmark = True
+
+################# training procedure ################
 
 # logging file
 log_f = open(log_f_name, "w+")
@@ -292,31 +260,22 @@ diff_f.write('episode,timestep,diff\n')
 acc_f = open(acc_f_name, "w+")
 acc_f.write('episode,timestep,acc\n')
 
-# printing and logging variables
-print_running_reward = 0
-print_running_episodes = 0
-
-log_running_reward = 0
-log_running_episodes = 0
-
+# initialize a PPO agent
+ppo_agent = PPO(lr_actor, lr_critic, batch_size, gamma, K_epochs,
+                eps_clip, has_continuous_action_space, action_std)
+# time_step = 2650888
+time_step = 0
 total_success_num = 0
 total_success_diff = 0
-
-time_step = 0
+print_running_reward = 0
+# i_episode = 5600
 i_episode = 0
-best_acc = 0
 
-print_running_reward_lock = threading.Lock()
-print_running_episodes_lock = threading.Lock()
-log_running_reward_lock = threading.Lock()
-log_running_episodes_lock = threading.Lock()
-total_success_num_lock = threading.Lock()
-total_success_diff_lock = threading.Lock()
-time_step_lock = threading.Lock()
-i_episode_lock = threading.Lock()
 ppo_agent_lock = threading.Lock()
+time_step_lock = threading.Lock()
+variance_lock = threading.Lock()
 
-dataset_dir = "../../../mnt/nfs/wyx/ppo/datasets" + str(run_num) + "/"
+dataset_dir = data + "wyx/ppo/datasets" + str(run_num) + "/"
 if os.path.exists(dataset_dir) is False:
     os.makedirs(dataset_dir, exist_ok=True)
 else:
@@ -325,6 +284,16 @@ else:
 
 points = get_start_end(num_nodes=num_nodes, radius=radius, test_num=test_num)
 paths, path_labels = get_big_map(path=bigmap_dir)
+
+# best_acc = 0.22142857142857142
+# best_diff = 65.63956115429576
+best_acc = 0
+best_diff = 10000
+
+print("============================================================================================")
+start_time = datetime.now().replace(microsecond=0)
+print("Started training at (GMT) : ", start_time)
+print("============================================================================================")
 
 while i_episode < max_training_timesteps:
     # 收集数据
@@ -352,64 +321,63 @@ while i_episode < max_training_timesteps:
 
     # 记录打印结果
     if total_success_num > 0:
-        print("total success num is: " + str(total_success_num / print_running_episodes))
-        acc_f.write('{},{},{}\n'.format(i_episode, time_step, total_success_num / print_running_episodes))
+        cur_acc = total_success_num / update_timestep
+        cur_diff = total_success_diff / total_success_num
+
+        print("total success num is: ", cur_acc)
+        acc_f.write('{},{},{}\n'.format(i_episode, time_step, cur_acc))
         acc_f.flush()
 
-        print("total success diff is: " + str(total_success_diff / total_success_num))
-        diff_f.write('{},{},{}\n'.format(i_episode, time_step, total_success_diff / total_success_num))
+        print("total success diff is: ", cur_diff)
+        diff_f.write('{},{},{}\n'.format(i_episode, time_step, cur_diff))
         diff_f.flush()
 
-        if total_success_num / print_running_episodes >= best_acc:
-            best_acc = total_success_num / print_running_episodes
-            print("------------------------------------------------------")
+        if cur_acc > best_acc or (cur_acc == best_acc and cur_diff <= best_diff):
+            best_acc = cur_acc
+            best_diff = cur_diff
             print("saving best model at : " + best_path)
             ppo_agent.save(time_step, best_acc, best_path)
             print("best model saved")
-            print("------------------------------------------------------")
     else:
-        print("total success num is: " + str(total_success_num))
-        acc_f.write('{},{},{}\n'.format(i_episode, time_step, total_success_num))
+        print("total success num is: 0")
+        acc_f.write('{},{},{}\n'.format(i_episode, time_step, 0))
         acc_f.flush()
 
-        print("total success diff is: " + str(total_success_diff))
-        diff_f.write('{},{},{}\n'.format(i_episode, time_step, total_success_diff))
+        print("total success diff is: 0")
+        diff_f.write('{},{},{}\n'.format(i_episode, time_step, 0))
         diff_f.flush()
     total_success_num = 0
     total_success_diff = 0
 
-    # log average reward till last episode
-    log_avg_reward = log_running_reward / log_running_episodes
-    log_avg_reward = round(log_avg_reward, 4)
-    log_f.write('{},{},{}\n'.format(i_episode, time_step, log_avg_reward))
-    log_f.flush()
-    log_running_reward = 0
-    log_running_episodes = 0
-
     # print average reward till last episode
-    print_avg_reward = print_running_reward / print_running_episodes
-    print_avg_reward = round(print_avg_reward, 2)
+    print_avg_reward = print_running_reward / update_timestep
+    print_avg_reward = round(print_avg_reward, 4)
     print("Episode : {} \t\t Timestep : {} \t\t Average Reward : {}".format(i_episode, time_step,
                                                                             print_avg_reward))
+    log_f.write('{},{},{}\n'.format(i_episode, time_step, print_avg_reward))
+    log_f.flush()
     print_running_reward = 0
-    print_running_episodes = 0
 
     # 保存agent
-    print("--------------------------------------------------------------------------------------------")
     print("saving model at : " + checkpoint_path)
     ppo_agent.save(time_step, -1, checkpoint_path)
     print("model saved")
-    print("--------------------------------------------------------------------------------------------")
+    end_time = datetime.now().replace(microsecond=0)
+    print("Total training time  : ", end_time - start_time)
+    print("============================================================================================")
 
     # 更新agent
     ppo_agent.update(dataset_dir)
     del_file(dataset_dir)
+    print("============================================================================================")
 
     # if continuous action space; then decay action std of ouput action distribution
     if has_continuous_action_space and i_episode % action_std_decay_freq == 0:
         ppo_agent.decay_action_std(action_std_decay_rate, min_action_std)
 
 log_f.close()
+diff_f.close()
+acc_f.close()
 
 # print total training time
 print("============================================================================================")

@@ -15,13 +15,28 @@ def pair(t):
 # classes
 
 class PreNorm(nn.Module):
-    def __init__(self, dim, fn):
+    def __init__(self, is_instance, dim, fn):
         super().__init__()
-        self.norm = nn.LayerNorm(dim)
+        # self.norm = nn.LayerNorm(dim)
+        self.is_instance = is_instance
+        if self.is_instance:
+            self.norm = nn.InstanceNorm2d(dim)
+            # self.instance_norm = nn.InstanceNorm2d(dim // 2)
+            # self.layer_norm = nn.LayerNorm(dim // 2)
+        else:
+            self.norm = nn.LayerNorm(dim)
+        self.dim = dim
         self.fn = fn
 
     def forward(self, x, **kwargs):
         return self.fn(self.norm(x), **kwargs)
+        # if self.is_instance:
+        #     x_1 = x[:, :, 0: self.dim // 2]
+        #     x_2 = x[:, :, self.dim // 2:]
+        #     norm_x = torch.cat((self.instance_norm(x_1), self.layer_norm(x_2)), dim=-1)
+        #     return self.fn(norm_x, **kwargs)
+        # else:
+        #     return self.fn(self.norm(x), **kwargs)
 
 
 class FeedForward(nn.Module):
@@ -73,11 +88,17 @@ class Transformer(nn.Module):
     def __init__(self, dim, depth, heads, dim_head, mlp_dim, dropout=0.):
         super().__init__()
         self.layers = nn.ModuleList([])
-        for _ in range(depth):
-            self.layers.append(nn.ModuleList([
-                PreNorm(dim, Attention(dim, heads=heads, dim_head=dim_head, dropout=dropout)),
-                PreNorm(dim, FeedForward(dim, mlp_dim, dropout=dropout))
-            ]))
+        for i in range(0, depth):
+            if i < depth // 2:
+                self.layers.append(nn.ModuleList([
+                    PreNorm(True, dim, Attention(dim, heads=heads, dim_head=dim_head, dropout=dropout)),
+                    PreNorm(True, dim, FeedForward(dim, mlp_dim, dropout=dropout))
+                ]))
+            else:
+                self.layers.append(nn.ModuleList([
+                    PreNorm(False, dim, Attention(dim, heads=heads, dim_head=dim_head, dropout=dropout)),
+                    PreNorm(False, dim, FeedForward(dim, mlp_dim, dropout=dropout))
+                ]))
 
     def forward(self, x):
         for attn, ff in self.layers:
@@ -161,7 +182,7 @@ class ViT(nn.Module):
 
 
 class Actor(nn.Module):
-    def __init__(self):
+    def __init__(self, checkpoint_path=None):
         super().__init__()
         self.actor = ViT(image_size=256,
                          patch_size=32,
@@ -172,6 +193,13 @@ class Actor(nn.Module):
                          mlp_dim=128,
                          dropout=0.,
                          emb_dropout=0.)
+        if checkpoint_path is not None:
+            state_dict1 = torch.load(checkpoint_path)
+            state_dict1 = state_dict1["state_dict"]
+            state_dict2 = {}
+            for name, param in state_dict1.items():
+                state_dict2[name[len("module:"):]] = param
+            self.actor.load_state_dict(state_dict2)
 
     def forward(self, img):
         return self.actor(img)

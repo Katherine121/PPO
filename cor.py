@@ -1,6 +1,10 @@
+# the random position deviation
+HEIGHT_NOISE = {200: 25}
 # the kinds of disturbances
+# NOISE_DB = [["rain", "random"], ["fog", "random"], ["bright", "random"]
+#             ]
 NOISE_DB = [["ori", "ori"], ["ori", "random"],
             ["cutout", "random"], ["rain", "random"], ["snow", "random"], ["fog", "random"], ["bright", "random"]
             ]
 # the random position deviation
-HEIGHT_NOISE = {100: 25, 150: 25, 200: 25, 250: 50, 300: 50}
+# HEIGHT_NOISE = {100: 25, 150: 25, 200: 25, 250: 50, 300: 50}

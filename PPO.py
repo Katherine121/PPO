@@ -69,7 +69,7 @@ class ActorCritic(nn.Module):
         raise NotImplementedError
 
     # old policy
-    def act(self, state):
+    def act(self, state, ppo_agent_lock):
         if self.has_continuous_action_space:
             # 输入状态，经过神经网络，输出动作（连续值）
             action_mean = self.actor(state)
@@ -77,7 +77,8 @@ class ActorCritic(nn.Module):
             cov_mat = torch.diag(self.action_var).unsqueeze(dim=0)
             # 输入：分布的平均值、正定协方差矩阵
             # 输出：由均值向量和协方差矩阵参数化的多元正态(也称为高斯)分布
-            dist = MultivariateNormal(action_mean, cov_mat)
+            with ppo_agent_lock:
+                dist = MultivariateNormal(action_mean, cov_mat)
         else:
             action_probs = self.actor(state)
             dist = Categorical(action_probs)
@@ -137,6 +138,10 @@ class PPO:
             {'params': self.policy.actor.parameters(), 'lr': lr_actor},
             {'params': self.policy.critic.parameters(), 'lr': lr_critic}
         ])
+        # state_dict1 = torch.load("PPO_preTrained/UAVnavigation/PPO_UAVnavigation_0_18_best.pth")
+        # print(state_dict1["best_acc"])
+        # state_dict1 = state_dict1["state_dict"]
+        # self.policy.load_state_dict(state_dict1)
 
         self.policy_old = ActorCritic(has_continuous_action_space, action_std_init).to(device)
         self.policy_old.load_state_dict(self.policy.state_dict())
@@ -169,12 +174,12 @@ class PPO:
             print("WARNING : Calling PPO::decay_action_std() on discrete action space policy")
         print("--------------------------------------------------------------------------------------------")
 
-    def select_action(self, state, path_list, episode_dir):
+    def select_action(self, state, path_list, episode_dir, ppo_agent_lock):
 
         if self.has_continuous_action_space:
             with torch.no_grad():
                 state = torch.FloatTensor(state).to(device)
-                action, action_logprob, state_val = self.policy_old.act(state)
+                action, action_logprob, state_val = self.policy_old.act(state, ppo_agent_lock)
 
             # self.buffer.states.append(path_list)
             # self.buffer.actions.append(action)
@@ -349,5 +354,5 @@ class PPO:
 
 
 if __name__ == '__main__':
-    state_dict = torch.load("PPO_preTrained/UAVnavigation/PPO_UAVnavigation_0_8_best.pth")
+    state_dict = torch.load("PPO_preTrained/UAVnavigation/PPO_UAVnavigation_0_15_best.pth")
     print(state_dict)

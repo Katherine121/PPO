@@ -66,10 +66,10 @@ def screenshot(paths, labels, new_lat, new_lon, cur_height, img_aug, path):
     # 300的真实距离对应420的像素距离对应580米高度
     lat_pixel_dis = lat_dis * 1.4
     lon_pixel_dis = lon_dis * 1.4
-    center = [1400 // 2, 1400 // 2]
+    # center = [1400 // 2, 1400 // 2]
     # 截图中心点的像素偏移量
-    new_lat_pixel = center[0] - lat_pixel_dis
-    new_lon_pixel = center[1] + lon_pixel_dis
+    new_lat_pixel = 700 - lat_pixel_dis
+    new_lon_pixel = 700 + lon_pixel_dis
 
     # altitude changing
     # 300的真实距离对应420的像素距离对应580米高度
@@ -88,20 +88,22 @@ def screenshot(paths, labels, new_lat, new_lon, cur_height, img_aug, path):
     pic = Image.open(paths[idx])
     pic = pic.crop((new_lon_pixel - pixel_w // 2, new_lat_pixel - pixel_h // 2,
                     new_lon_pixel + pixel_w // 2, new_lat_pixel + pixel_h // 2))
-    pic = pic.resize((256, 256))
+    # pic = pic.resize((256, 256))
     # pic = pic.rotate(90 - ang)
 
-    pic = pic.convert('RGB')
     # add style noise to the new image
-    pic = np.array(pic)
-    pic = img_aug(pic)
-    pic = Image.fromarray(pic)
+    pic = pic.convert('RGB')
+    if img_aug is not None and img_aug.style_idx != "ori":
+        pic = np.array(pic)
+        pic = img_aug(pic)
+        pic = Image.fromarray(pic)
     pic.save(path)
     dfs_compress(path, path, target_size=10)
 
     normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                      std=[0.229, 0.224, 0.225])
     val_transform = transforms.Compose([
+        transforms.Resize((256, 256)),
         transforms.ToTensor(),
         normalize,
     ])
@@ -165,7 +167,7 @@ class MyUAVgym(gym.Env):
         self.noise_index = self.points[i][3]
         self.test_num = self.points[i][4]
 
-        self.episode_dir = dataset_dir + "path" + str(i) + str(",") \
+        self.episode_dir = dataset_dir + "path" + str(index) + str(",") \
                            + "height" + str(self.height) + "," \
                            + self.NOISE_DB[self.noise_index][0] + "-" + self.NOISE_DB[self.noise_index][1] + "," \
                            + str(self.test_num)
@@ -185,7 +187,7 @@ class MyUAVgym(gym.Env):
         # 终点的位置不加噪声，高度不加噪声
         # 中间位置加噪声，高度加噪声
         # 天气+位置噪声版本：起点的位置加噪声，高度加噪声，外观加噪声
-        # 终点的位置不加噪声，高度不加噪声，外观加噪声
+        # 终点的位置不加噪声，高度不加噪声，外观不加噪声
         # 中间位置加噪声，高度加噪声，外观加噪声
         # 2
         self.image_augment = ImageAugment(style_idx=self.NOISE_DB[self.noise_index][0],
@@ -209,7 +211,7 @@ class MyUAVgym(gym.Env):
                         + str(self.end_pos[0]) + "," + str(self.end_pos[1]) \
                         + "," + str(self.height) + '.png'
         self.end_pic = screenshot(self.paths, self.path_labels, self.end_pos[0], self.end_pos[1],
-                                  self.height, self.image_augment, self.end_path)
+                                  self.height, None, self.end_path)
 
         self.step_num = 1
 
@@ -248,8 +250,7 @@ class MyUAVgym(gym.Env):
         success = 0
         success_diff = 0
         if diff <= self.done_thresh and self.step_num <= self.max_step_num - 1:
-            print("successfully arrived! in " + str(diff) + " m, by total_step_num: "
-                  + str(self.step_num) + " / " + str(self.last_diff // self.dis))
+            print(self.episode_dir + ": successfully arrived in " + str(diff) + " m, by total_step_num " + str(self.step_num))
             # print("origin end point pos:" + str(self.end_pos[0]) + "," + str(self.end_pos[1]))
             # print("actual end point pos:" + str(self.cur_pos[0]) + "," + str(self.cur_pos[1]))
             reward = reward1 + 10
