@@ -54,13 +54,3 @@ class ImageAugment(nn.Module):
             random_lon_shift = 0
             random_hei_shift = 0
         return list([random_lat_shift, random_lon_shift, random_hei_shift])
-
-
-if __name__ == '__main__':
-    image_augment = ImageAugment(style_idx="bright", shift_idx="ori")
-    pic = Image.open("../1.png")
-
-    pic = np.array(pic)
-    pic = image_augment(pic)
-    pic = Image.fromarray(pic)
-    pic.save("../2.png")

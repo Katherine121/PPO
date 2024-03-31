@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
-  <component name="PublishConfigData" autoUpload="On explicit save action" serverName="wyx@10.82.68.204:18022 agent (25)" remoteFilesAllowedToDisappearOnAutoupload="false">
+  <component name="PublishConfigData" autoUpload="Always" serverName="wyx@10.82.68.204:18022 agent (28)" remoteFilesAllowedToDisappearOnAutoupload="false">
     <serverData>
       <paths name="135">
         <serverdata>
@@ -16,10 +16,10 @@
           </mappings>
         </serverdata>
       </paths>
-      <paths name="wj">
+      <paths name="40 (project level)">
         <serverdata>
           <mappings>
-            <mapping deploy="/home/wj/PPO" local="$PROJECT_DIR$" web="/" />
+            <mapping local="$PROJECT_DIR$" web="/" />
           </mappings>
         </serverdata>
       </paths>
@@ -212,6 +212,27 @@
           </mappings>
         </serverdata>
       </paths>
+      <paths name="wyx@10.82.68.204:18022 agent (26)">
+        <serverdata>
+          <mappings>
+            <mapping deploy="/home/wyx/PPO" local="$PROJECT_DIR$" />
+          </mappings>
+        </serverdata>
+      </paths>
+      <paths name="wyx@10.82.68.204:18022 agent (27)">
+        <serverdata>
+          <mappings>
+            <mapping local="$PROJECT_DIR$" web="/" />
+          </mappings>
+        </serverdata>
+      </paths>
+      <paths name="wyx@10.82.68.204:18022 agent (28)">
+        <serverdata>
+          <mappings>
+            <mapping deploy="/home/wyx/PPO" local="$PROJECT_DIR$" />
+          </mappings>
+        </serverdata>
+      </paths>
       <paths name="wyx@10.82.68.204:18022 agent (3)">
         <serverdata>
           <mappings>
@@ -261,7 +282,70 @@
           </mappings>
         </serverdata>
       </paths>
+      <paths name="wyx@10.82.68.40:18022 agent">
+        <serverdata>
+          <mappings>
+            <mapping deploy="/home/wyx/PPO" local="$PROJECT_DIR$" />
+          </mappings>
+        </serverdata>
+      </paths>
+      <paths name="wyx@10.82.68.40:18022 agent (2)">
+        <serverdata>
+          <mappings>
+            <mapping local="$PROJECT_DIR$" web="/" />
+          </mappings>
+        </serverdata>
+      </paths>
+      <paths name="wyx@10.82.68.40:18022 agent (3)">
+        <serverdata>
+          <mappings>
+            <mapping local="$PROJECT_DIR$" web="/" />
+          </mappings>
+        </serverdata>
+      </paths>
+      <paths name="wyx@10.82.68.40:18022 agent (4)">
+        <serverdata>
+          <mappings>
+            <mapping local="$PROJECT_DIR$" web="/" />
+          </mappings>
+        </serverdata>
+      </paths>
+      <paths name="wyx@10.82.68.40:18022 agent (5)">
+        <serverdata>
+          <mappings>
+            <mapping local="$PROJECT_DIR$" web="/" />
+          </mappings>
+        </serverdata>
+      </paths>
+      <paths name="wyx@10.82.68.40:18022 agent (6)">
+        <serverdata>
+          <mappings>
+            <mapping local="$PROJECT_DIR$" web="/" />
+          </mappings>
+        </serverdata>
+      </paths>
+      <paths name="wyx@10.82.68.40:18022 agent (7)">
+        <serverdata>
+          <mappings>
+            <mapping local="$PROJECT_DIR$" web="/" />
+          </mappings>
+        </serverdata>
+      </paths>
+      <paths name="wyx@10.82.68.40:18022 agent (8)">
+        <serverdata>
+          <mappings>
+            <mapping local="$PROJECT_DIR$" web="/" />
+          </mappings>
+        </serverdata>
+      </paths>
+      <paths name="wyx@10.82.68.40:18022 agent (9)">
+        <serverdata>
+          <mappings>
+            <mapping local="$PROJECT_DIR$" web="/" />
+          </mappings>
+        </serverdata>
+      </paths>
     </serverData>
-    <option name="myAutoUpload" value="ON_EXPLICIT_SAVE" />
+    <option name="myAutoUpload" value="ALWAYS" />
   </component>
 </project>

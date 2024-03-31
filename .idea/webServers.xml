@@ -2,13 +2,6 @@
 <project version="4">
   <component name="WebServers">
     <option name="servers">
-      <webServer id="784b834b-1b72-4966-99cf-d2fc9319d381" name="wj">
-        <fileTransfer accessType="SFTP" host="10.82.68.40" port="18022" sshConfigId="7f46adfe-c716-4e3e-a5e6-cdd6863a5642" sshConfig="wj@10.82.68.40:18022 agent" authAgent="true">
-          <advancedOptions>
-            <advancedOptions dataProtectionLevel="Private" passiveMode="true" shareSSLContext="true" />
-          </advancedOptions>
-        </fileTransfer>
-      </webServer>
       <webServer id="c6d1200e-ffac-42ec-9e4a-2a0468ebe0b1" name="151">
         <fileTransfer accessType="SFTP" host="10.214.211.151" port="18022" sshConfigId="9bfeeed4-fc4c-408a-ad55-e000fe2269d5" sshConfig="wyx@10.214.211.151:18022 agent" authAgent="true">
           <advancedOptions>
@@ -18,6 +11,13 @@
       </webServer>
       <webServer id="0f83d9cb-47b6-417e-8b60-5df4291892b2" name="135">
         <fileTransfer accessType="SFTP" host="10.214.211.135" port="18022" sshConfigId="b4e9dc6a-611a-45a1-9744-35c7fdf59455" sshConfig="wyx@10.214.211.135:18022 agent" authAgent="true">
+          <advancedOptions>
+            <advancedOptions dataProtectionLevel="Private" passiveMode="true" shareSSLContext="true" />
+          </advancedOptions>
+        </fileTransfer>
+      </webServer>
+      <webServer id="79f173ff-38d0-478b-bc94-bfbd33717e10" name="40 (project level)">
+        <fileTransfer accessType="SFTP" host="10.82.68.40" port="18022" sshConfigId="9b95d384-a710-4e6c-b17f-4a4eeeb3d675" sshConfig="wyx@10.82.68.40:18022 agent" authAgent="true">
           <advancedOptions>
             <advancedOptions dataProtectionLevel="Private" passiveMode="true" shareSSLContext="true" />
           </advancedOptions>

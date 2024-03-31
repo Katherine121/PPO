@@ -1,9 +1,10 @@
+import timm.models
 import torch
-# from thop import profile
 from torch import nn
-
+import torchvision.models
 from einops import rearrange, repeat
 from einops.layers.torch import Rearrange
+from thop import profile
 
 
 # helpers
@@ -15,28 +16,13 @@ def pair(t):
 # classes
 
 class PreNorm(nn.Module):
-    def __init__(self, is_instance, dim, fn):
+    def __init__(self, dim, fn):
         super().__init__()
-        # self.norm = nn.LayerNorm(dim)
-        self.is_instance = is_instance
-        if self.is_instance:
-            self.norm = nn.InstanceNorm2d(dim)
-            # self.instance_norm = nn.InstanceNorm2d(dim // 2)
-            # self.layer_norm = nn.LayerNorm(dim // 2)
-        else:
-            self.norm = nn.LayerNorm(dim)
-        self.dim = dim
+        self.norm = nn.LayerNorm(dim)
         self.fn = fn
 
     def forward(self, x, **kwargs):
         return self.fn(self.norm(x), **kwargs)
-        # if self.is_instance:
-        #     x_1 = x[:, :, 0: self.dim // 2]
-        #     x_2 = x[:, :, self.dim // 2:]
-        #     norm_x = torch.cat((self.instance_norm(x_1), self.layer_norm(x_2)), dim=-1)
-        #     return self.fn(norm_x, **kwargs)
-        # else:
-        #     return self.fn(self.norm(x), **kwargs)
 
 
 class FeedForward(nn.Module):
@@ -89,16 +75,10 @@ class Transformer(nn.Module):
         super().__init__()
         self.layers = nn.ModuleList([])
         for i in range(0, depth):
-            if i < depth // 2:
-                self.layers.append(nn.ModuleList([
-                    PreNorm(True, dim, Attention(dim, heads=heads, dim_head=dim_head, dropout=dropout)),
-                    PreNorm(True, dim, FeedForward(dim, mlp_dim, dropout=dropout))
-                ]))
-            else:
-                self.layers.append(nn.ModuleList([
-                    PreNorm(False, dim, Attention(dim, heads=heads, dim_head=dim_head, dropout=dropout)),
-                    PreNorm(False, dim, FeedForward(dim, mlp_dim, dropout=dropout))
-                ]))
+            self.layers.append(nn.ModuleList([
+                PreNorm(dim, Attention(dim, heads=heads, dim_head=dim_head, dropout=dropout)),
+                PreNorm(dim, FeedForward(dim, mlp_dim, dropout=dropout))
+            ]))
 
     def forward(self, x):
         for attn, ff in self.layers:
@@ -108,8 +88,10 @@ class Transformer(nn.Module):
 
 
 class ViT(nn.Module):
-    def __init__(self, *, image_size, patch_size, num_classes, dim, depth, heads, mlp_dim, pool='cls', channels=3,
-                 dim_head=64, dropout=0., emb_dropout=0.):
+    def __init__(self, *, image_size, patch_size,
+                 dim, depth, heads, dim_head, mlp_dim,
+                 dropout=0., emb_dropout=0.,
+                 pool='cls', channels=3):
         super().__init__()
         image_height, image_width = pair(image_size)
         patch_height, patch_width = pair(patch_size)
@@ -162,7 +144,6 @@ class ViT(nn.Module):
 
         else:
             b = img.size(0)
-            # b,len,3,224,224->b*len,3,224,224->b*len,576->b,len,576
             img = img.reshape(b * 2, 3, self.height, self.height)
 
             x = self.to_patch_embedding(img)
@@ -181,18 +162,75 @@ class ViT(nn.Module):
         return self.mlp_head(img)
 
 
+class SURFNet(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.extractor_dim = 640
+        self.mlp_head = nn.Sequential(
+            nn.Linear(2 * self.extractor_dim, 64),
+            nn.Tanh(),
+            nn.Linear(64, 64),
+            nn.Tanh(),
+            nn.Linear(64, 2),
+            nn.Tanh()
+        )
+
+    def forward(self, img):
+        # input surf features
+        if len(img.shape) == 2:
+            img = img.reshape(-1, 2 * self.extractor_dim)
+        else:
+            b = img.size(0)
+            img = img.reshape(b, 2 * self.extractor_dim)
+
+        return self.mlp_head(img)
+
+
+class MobileNet(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.backbone = torchvision.models.mobilenet_v3_small()
+        self.backbone.classifier = nn.Identity()
+        self.extractor_dim = 576
+        self.mlp_head = nn.Sequential(
+            nn.Linear(2 * self.extractor_dim, 64),
+            nn.Tanh(),
+            nn.Linear(64, 64),
+            nn.Tanh(),
+            nn.Linear(64, 2),
+            nn.Tanh()
+        )
+
+    def forward(self, img):
+        if len(img.shape) == 4:
+            x = self.backbone(img)
+            img = x.reshape(-1, 2 * self.extractor_dim)
+        else:
+            b = img.size(0)
+            x = self.backbone(img.view(b * 2, 3, 256, 256))
+            img = x.reshape(b, 2 * self.extractor_dim)
+
+        return self.mlp_head(img)
+
+
 class Actor(nn.Module):
     def __init__(self, checkpoint_path=None):
         super().__init__()
         self.actor = ViT(image_size=256,
                          patch_size=32,
-                         num_classes=1000,
                          dim=64,
                          depth=4,
                          heads=2,
+                         dim_head=64,
                          mlp_dim=128,
                          dropout=0.,
                          emb_dropout=0.)
+        # self.actor = MobileNet()
+        # print(self.actor)
+        # flops 51.21M, params 0.41M
+        flops, params = profile(self.actor, (torch.randn(2, 3, 256, 256), ))
+        print('flops: ', flops, 'params: ', params)
+        print('flops: %.2f M, params: %.2f M' % (flops / 1000000.0, params / 1000000.0))
         if checkpoint_path is not None:
             state_dict1 = torch.load(checkpoint_path)
             state_dict1 = state_dict1["state_dict"]
@@ -210,13 +248,14 @@ class Critic(nn.Module):
         super().__init__()
         self.critic = ViT(image_size=256,
                           patch_size=32,
-                          num_classes=1000,
                           dim=64,
                           depth=4,
                           heads=2,
+                          dim_head=64,
                           mlp_dim=128,
                           dropout=0.,
                           emb_dropout=0.)
+        # self.critic = MobileNet()
         self.critic.mlp_head = nn.Sequential(
             nn.Linear(2 * self.critic.extractor_dim, 64),
             nn.Tanh(),
@@ -227,10 +266,3 @@ class Critic(nn.Module):
 
     def forward(self, img):
         return self.critic(img)
-
-
-# if __name__ == '__main__':
-#     model = Actor()
-#     flops, params = profile(model, (torch.randn(2, 3, 256, 256), ))
-#     print('flops: ', flops, 'params: ', params)
-#     print('flops: %.2f M, params: %.2f M' % (flops / 1000000.0, params / 1000000.0))

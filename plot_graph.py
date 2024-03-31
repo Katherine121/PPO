@@ -1,4 +1,6 @@
 import os
+
+import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import torch
@@ -47,10 +49,17 @@ def save_graph(run_num):
 
     fig_save_path = figures_dir + '/PPO_' + env_name + '_fig_' + str(run_num) + '.png'
 
-    log_f_name = log_dir + '/PPO_' + env_name + "_log_" + str(run_num) + ".csv"
+    log_f_name = log_dir + '/PPO_' + env_name + "_vallog_" + str(run_num) + ".csv"
     print("loading data from : " + log_f_name)
     data = pd.read_csv(log_f_name)
     data = pd.DataFrame(data)
+
+    rows_to_remove = []
+    for i in range(5, len(data), 2):
+        rows_to_remove.append(i)
+
+    # 使用drop()方法移除指定行的数据
+    data = data.drop(rows_to_remove)
 
     print("data shape : ", data.shape)
 
@@ -70,8 +79,8 @@ def save_graph(run_num):
         data_avg['reward_smooth'] = data_avg['reward'].rolling(window=window_len_smooth, win_type='triang', min_periods=min_window_len_smooth).mean()
         data_avg['reward_var'] = data_avg['reward'].rolling(window=window_len_var, win_type='triang', min_periods=min_window_len_var).mean()
 
-        data_avg.plot(kind='line', x='episode' , y='reward_smooth',ax=ax,color=colors[0],  linewidth=linewidth_smooth, alpha=alpha_smooth)
-        data_avg.plot(kind='line', x='episode' , y='reward_var',ax=ax,color=colors[0],  linewidth=linewidth_var, alpha=alpha_var)
+        data_avg.plot(kind='line', x='timestep' , y='reward_smooth',ax=ax,color=colors[0],  linewidth=linewidth_smooth, alpha=alpha_smooth)
+        data_avg.plot(kind='line', x='timestep' , y='reward_var',ax=ax,color=colors[0],  linewidth=linewidth_var, alpha=alpha_var)
 
         # keep only reward_smooth in the legend and rename it
         handles, labels = ax.get_legend_handles_labels()
@@ -84,8 +93,8 @@ def save_graph(run_num):
             run['reward_var_' + str(i)] = run['reward'].rolling(window=window_len_var, win_type='triang', min_periods=min_window_len_var).mean()
 
             # plot the lines
-            run.plot(kind='line', x='episode' , y='reward_smooth_' + str(i),ax=ax,color=colors[i % len(colors)],  linewidth=linewidth_smooth, alpha=alpha_smooth)
-            run.plot(kind='line', x='episode' , y='reward_var_' + str(i),ax=ax,color=colors[i % len(colors)],  linewidth=linewidth_var, alpha=alpha_var)
+            run.plot(kind='line', x='timestep' , y='reward_smooth_' + str(i),ax=ax,color=colors[i % len(colors)],  linewidth=linewidth_smooth, alpha=alpha_smooth)
+            run.plot(kind='line', x='timestep' , y='reward_var_' + str(i),ax=ax,color=colors[i % len(colors)],  linewidth=linewidth_var, alpha=alpha_var)
 
         # keep alternate elements (reward_smooth_i) in the legend
         handles, labels = ax.get_legend_handles_labels()
@@ -102,7 +111,7 @@ def save_graph(run_num):
 
     ax.grid(color='gray', linestyle='-', linewidth=1, alpha=0.2)
 
-    ax.set_xlabel("Episodes", fontsize=12)
+    ax.set_xlabel("Timesteps", fontsize=12)
     ax.set_ylabel("Rewards", fontsize=12)
 
     plt.title(env_name, fontsize=14)
@@ -119,5 +128,4 @@ def save_graph(run_num):
 
 
 if __name__ == '__main__':
-    save_graph(14)
-    save_graph(15)
+    save_graph(1)
