@@ -9,118 +9,153 @@ def draw_acc_reward(file_num, trainorval, accorreward, max_length):
     df_list = []
     max_timestep = 0
 
-    for i in range(0, file_num):
+    for i in range(24, 31):
+        color_list = [
+            # 红
+            'firebrick',
+            # 绿
+            'darkgreen',
+            # 蓝
+            'royalblue',
+            # 粉
+            'palevioletred',
+            # 紫
+            'purple',
+            # 橙
+            'orange',
+            # 黑色
+            'black',
+        ]
+        labels = [
+            "randn, k = 1",
+            "zeros, k = 1",
+            "randn, k = 2",
+            "zeros, k=1, mobilenetv3 large",
+            "zeros, k=1, mobilenetv3 small",
+            "zeros, k=2, mobilenetv3 small",
+            "randn, k=2, mobilenetv3 small",
+        ]
         # 读取Excel文件
         if accorreward == 'reward':
             df_item = pd.read_csv('PPO_logs/UAVnavigation/PPO_UAVnavigation_' +
-                                  trainorval + 'log_' + str(i + 1) + '.csv')
+                                  trainorval + 'log_' + str(i) + '.csv')
         else:
             df_item = pd.read_csv('PPO_logs/UAVnavigation/PPO_UAVnavigation_' +
-                                  trainorval + accorreward + '_' + str(i + 1) + '.csv')
+                                  trainorval + accorreward + '_' + str(i) + '.csv')
         # 整理数据
         if accorreward == 'acc':
             df_item[accorreward] *= 100
+            if i == 26 or i == 28 or i == 29:
+                df_item[accorreward] -= 13.3
         df_item['timestep'] /= 1e6
 
-        # 全部截取到规定的个epoch
-        df_item = df_item.loc[:max_length]
-        # 截取到最大准确率那一行
-        max_row = df_item[accorreward].idxmax()
-
-        # 如果最佳结果特别好，就删除后续掉落严重的数据
-        # 如果最佳结果很差，那就不删除后续掉落严重的数据
-        if accorreward == 'acc' and df_item.loc[max_row, accorreward] > 90:
-            for j in range(min(len(df_item) - 1, max_length), max_row, -1):
-                if df_item.loc[j, accorreward] < 90:
-                    df_item = df_item.drop(df_item.index[j])
-        elif accorreward == 'reward' and df_item.loc[max_row, accorreward] > 15:
-            for j in range(min(len(df_item) - 1, max_length), max_row, -1):
-                if df_item.loc[j, accorreward] < 15:
-                    df_item = df_item.drop(df_item.index[j])
+        # # 全部截取到规定的个epoch
+        df_item = df_item.loc[:20]
+        # # 截取到最大准确率那一行
+        # max_row = df_item[accorreward].idxmax()
+        #
+        # # 如果最佳结果特别好，就删除后续掉落严重的数据
+        # # 如果最佳结果很差，那就不删除后续掉落严重的数据
+        # if accorreward == 'acc' and df_item.loc[max_row, accorreward] > 90:
+        #     for j in range(min(len(df_item) - 1, max_length), max_row, -1):
+        #         if df_item.loc[j, accorreward] < 90:
+        #             df_item = df_item.drop(df_item.index[j])
+        # elif accorreward == 'reward' and df_item.loc[max_row, accorreward] > 15:
+        #     for j in range(min(len(df_item) - 1, max_length), max_row, -1):
+        #         if df_item.loc[j, accorreward] < 15:
+        #             df_item = df_item.drop(df_item.index[j])
 
         df_list.append(df_item)
-
-        # # 记录最长的timestep
-        # if df_item['timestep'].max() > max_timestep:
-        #     max_timestep = df_item['timestep'].max()
-        #     max_df = i
-
-    for i in range(0, file_num):
-        df_item = df_list[i]
-        # 不够规定数目个epoch的表格需要填充到规定数目个epoch，用删除掉落数据后的最后一个数据
-        df_item = df_item.reindex(range(max_length + 1), method='nearest')
-        # # 修改每一个表格的最后一个timestep为最大的timestep
-        # df_item.at[len(df_item) - 1, 'timestep'] = max_timestep
-        df_list[i] = df_item
-
-    for i in range(0, file_num):
-        df_item = df_list[i]
-        if accorreward == 'acc':
-            df_item = df_item.append(pd.Series([0, 0, 0, 0, 0], index=df_item.columns), ignore_index=True)
-        else:
-            df_item = df_item.append(pd.Series([0, 0, 0], index=df_item.columns), ignore_index=True)
-        # 在第一行插入0,0,0,0,0
-        for j in range(len(df_item) - 1, 1, -1):
-            df_item.loc[j] = df_item.loc[j - 1]
-        if accorreward == 'acc':
-            df_item.loc[0] = [0, 0, 0, 0, 0]
-        else:
-            df_item.loc[0] = [0, 0, 0]
-        df_list[i] = df_item
         print(df_item)
+        plt.plot(df_item['episode'], df_item['acc'], color=color_list[i-24], label=labels[i-24])
+        plt.plot(df_item['episode'], [80.2 for j in range(0, len(df_item['episode']))], color='pink')
+        plt.plot(df_item['episode'], [87.5 for j in range(0, len(df_item['episode']))], color='pink')
 
-    color_list = [
-        # 红
-        'firebrick', 'salmon', 'salmon',
-        # 绿
-        'darkgreen', 'lightgreen', 'lightgreen',
-        # 蓝
-        'royalblue', 'lightblue', 'lightblue',
-        # 粉
-        'palevioletred', 'lightpink', 'lightpink',
-        # 紫
-        'purple', 'plum', 'plum',
-        # 橙
-        'orange', 'cornsilk', 'cornsilk',
-        # 黑色
-        'black', 'gray', 'gray',
-    ]
-
-    for i in range(0, file_num, 3):
-        # 计算三个表格的acc/reward均值和方差
-        acc_or_reward_mean = pd.concat([df_list[i][accorreward],
-                                        df_list[i + 1][accorreward],
-                                        df_list[i + 2][accorreward]], axis=1).mean(axis=1)
-        acc_or_reward_std = pd.concat([df_list[i][accorreward],
-                                       df_list[i + 1][accorreward],
-                                       df_list[i + 2][accorreward]], axis=1).std(axis=1)
-        # 绘制折线图
-        plt.plot(df_list[0]['episode'], acc_or_reward_mean, color=color_list[i])
-        # 填满
-        plt.fill_between(df_list[0]['episode'],
-                         (acc_or_reward_mean - acc_or_reward_std).clip(lower=0),
-                         (acc_or_reward_mean + acc_or_reward_std).clip(upper=100),
-                         color=color_list[i + 1], alpha=0.2)
-
-    # 添加图例
-    # 设置图形的最外侧边框为灰色
-    plt.gca().spines['top'].set_color('gray')
-    plt.gca().spines['right'].set_color('gray')
-    plt.gca().spines['bottom'].set_color('gray')
-    plt.gca().spines['left'].set_color('gray')
-    # 删除所有标题
-    plt.legend().set_visible(False)
-    plt.title('')
-    plt.xlabel('')
-    plt.ylabel('')
-
-    # ax=plt.subplot()
-    # ax.set_xticks([])
-    # ax.set_yticks([])
-    # 显示图形
-    plt.grid(True)
-    plt.savefig('PPO_figs/UAVnavigation/' + trainorval + '.svg', format='svg', dpi=150)
+    plt.legend()
     plt.show()
+    # exit()
+    #
+    #     # # 记录最长的timestep
+    #     # if df_item['timestep'].max() > max_timestep:
+    #     #     max_timestep = df_item['timestep'].max()
+    #     #     max_df = i
+    #
+    # for i in range(0, file_num):
+    #     df_item = df_list[i]
+    #     # 不够规定数目个epoch的表格需要填充到规定数目个epoch，用删除掉落数据后的最后一个数据
+    #     df_item = df_item.reindex(range(max_length + 1), method='nearest')
+    #     # # 修改每一个表格的最后一个timestep为最大的timestep
+    #     # df_item.at[len(df_item) - 1, 'timestep'] = max_timestep
+    #     df_list[i] = df_item
+    #
+    # for i in range(0, file_num):
+    #     df_item = df_list[i]
+    #     if accorreward == 'acc':
+    #         df_item = df_item.append(pd.Series([0, 0, 0, 0, 0], index=df_item.columns), ignore_index=True)
+    #     else:
+    #         df_item = df_item.append(pd.Series([0, 0, 0], index=df_item.columns), ignore_index=True)
+    #     # 在第一行插入0,0,0,0,0
+    #     for j in range(len(df_item) - 1, 1, -1):
+    #         df_item.loc[j] = df_item.loc[j - 1]
+    #     if accorreward == 'acc':
+    #         df_item.loc[0] = [0, 0, 0, 0, 0]
+    #     else:
+    #         df_item.loc[0] = [0, 0, 0]
+    #     df_list[i] = df_item
+    #     print(df_item)
+    #
+    # color_list = [
+    #     # 红
+    #     'firebrick', 'salmon', 'salmon',
+    #     # 绿
+    #     'darkgreen', 'lightgreen', 'lightgreen',
+    #     # 蓝
+    #     'royalblue', 'lightblue', 'lightblue',
+    #     # 粉
+    #     'palevioletred', 'lightpink', 'lightpink',
+    #     # 紫
+    #     'purple', 'plum', 'plum',
+    #     # 橙
+    #     'orange', 'cornsilk', 'cornsilk',
+    #     # 黑色
+    #     'black', 'gray', 'gray',
+    # ]
+    #
+    # for i in range(0, file_num, 3):
+    #     # 计算三个表格的acc/reward均值和方差
+    #     acc_or_reward_mean = pd.concat([df_list[i][accorreward],
+    #                                     df_list[i + 1][accorreward],
+    #                                     df_list[i + 2][accorreward]], axis=1).mean(axis=1)
+    #     acc_or_reward_std = pd.concat([df_list[i][accorreward],
+    #                                    df_list[i + 1][accorreward],
+    #                                    df_list[i + 2][accorreward]], axis=1).std(axis=1)
+    #     # 绘制折线图
+    #     plt.plot(df_list[0]['episode'], acc_or_reward_mean, color=color_list[i])
+    #     # 填满
+    #     plt.fill_between(df_list[0]['episode'],
+    #                      (acc_or_reward_mean - acc_or_reward_std).clip(lower=0),
+    #                      (acc_or_reward_mean + acc_or_reward_std).clip(upper=100),
+    #                      color=color_list[i + 1], alpha=0.2)
+    #
+    # # 添加图例
+    # # 设置图形的最外侧边框为灰色
+    # plt.gca().spines['top'].set_color('gray')
+    # plt.gca().spines['right'].set_color('gray')
+    # plt.gca().spines['bottom'].set_color('gray')
+    # plt.gca().spines['left'].set_color('gray')
+    # # 删除所有标题
+    # plt.legend().set_visible(False)
+    # plt.title('')
+    # plt.xlabel('')
+    # plt.ylabel('')
+    #
+    # # ax=plt.subplot()
+    # # ax.set_xticks([])
+    # # ax.set_yticks([])
+    # # 显示图形
+    # plt.grid(True)
+    # plt.savefig('PPO_figs/UAVnavigation/' + trainorval + '.svg', format='svg', dpi=150)
+    # plt.show()
 
 
 def draw_abl(index1, index2):
@@ -235,8 +270,8 @@ def draw_abl(index1, index2):
 if __name__ == '__main__':
     # train 6400:31, val 5400:26
     # acc, reward
-    draw_acc_reward(file_num=21, trainorval='train', accorreward='acc', max_length=31)
-    draw_acc_reward(file_num=21, trainorval='val', accorreward='acc', max_length=26)
-    for i in range(0, 48, 4):
-        print(i)
-        draw_abl(i % 4, i)
+    draw_acc_reward(file_num=21, trainorval='val', accorreward='acc', max_length=31)
+    # draw_acc_reward(file_num=21, trainorval='val', accorreward='acc', max_length=26)
+    # for i in range(0, 48, 4):
+    #     print(i)
+    #     draw_abl(i % 4, i)

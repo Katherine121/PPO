@@ -49,13 +49,13 @@ def save_graph(run_num):
 
     fig_save_path = figures_dir + '/PPO_' + env_name + '_fig_' + str(run_num) + '.png'
 
-    log_f_name = log_dir + '/PPO_' + env_name + "_vallog_" + str(run_num) + ".csv"
+    log_f_name = log_dir + '/PPO_' + env_name + "_trainlog_" + str(run_num) + ".csv"
     print("loading data from : " + log_f_name)
     data = pd.read_csv(log_f_name)
     data = pd.DataFrame(data)
 
     rows_to_remove = []
-    for i in range(5, len(data), 2):
+    for i in range(len(data) - 5, len(data)):
         rows_to_remove.append(i)
 
     # 使用drop()方法移除指定行的数据
@@ -128,4 +128,4 @@ def save_graph(run_num):
 
 
 if __name__ == '__main__':
-    save_graph(1)
+    save_graph(3)

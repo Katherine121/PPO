@@ -1,13 +1,14 @@
 import os
 import random
+
+import numpy as np
 import torch
 import torch.nn as nn
 from torch.distributions import MultivariateNormal
 from torch.distributions import Categorical
 
-from vit import Actor, Critic
+from actor_critic import Actor, Critic
 from dataset import UAVdataset, SURFdataset, transform_surf_features
-
 
 print("============================================================================================")
 # set device to cpu or cuda
@@ -22,7 +23,7 @@ print("=========================================================================
 
 
 class ActorCritic(nn.Module):
-    def __init__(self, has_continuous_action_space, action_std_init):
+    def __init__(self, has_continuous_action_space, action_std_init, num_experts, noisy_gating, k):
         super(ActorCritic, self).__init__()
 
         self.has_continuous_action_space = has_continuous_action_space
@@ -32,9 +33,13 @@ class ActorCritic(nn.Module):
             # Fill the tensor in the shape of (action_dim,) with init * init
             self.action_var = torch.full((self.action_dim,), action_std_init * action_std_init).to(device)
 
-        self.actor = Actor()
+        self.actor = Actor(num_experts=num_experts,
+                           noisy_gating=noisy_gating,
+                           k=k)
         self.actor = self.actor.cuda()
-        self.critic = Critic()
+        self.critic = Critic(num_experts=num_experts,
+                             noisy_gating=noisy_gating,
+                             k=k)
         self.critic = self.critic.cuda()
 
     def set_action_std(self, new_action_std):
@@ -51,7 +56,7 @@ class ActorCritic(nn.Module):
     # old policy
     def act(self, state, ppo_agent_lock):
         if self.has_continuous_action_space:
-            action_mean = self.actor(state)
+            action_mean, moe_actor_loss = self.actor(state)
             # Take the diagonal element of self.action_var
             cov_mat = torch.diag(self.action_var).unsqueeze(dim=0)
             # Input: mean of distribution, positive definite covariance matrix
@@ -66,14 +71,14 @@ class ActorCritic(nn.Module):
         action = dist.sample()
         action_logprob = dist.log_prob(action)
 
-        state_val = self.critic(state)
+        state_val, moe_critic_loss = self.critic(state)
 
         return action.detach(), action_logprob.detach(), state_val.detach()
 
     # new policy
     def evaluate(self, state, action):
         if self.has_continuous_action_space:
-            action_mean = self.actor(state)
+            action_mean, moe_actor_loss = self.actor(state)
 
             # Extend self.action_var to the same dimension as action_mean
             action_var = self.action_var.expand_as(action_mean)
@@ -89,15 +94,15 @@ class ActorCritic(nn.Module):
             action_probs = self.actor(state)
             dist = Categorical(action_probs)
         action_logprobs = dist.log_prob(action)
-        state_values = self.critic(state)
+        state_values, moe_critic_loss = self.critic(state)
         dist_entropy = dist.entropy()
 
-        return action_logprobs, state_values, dist_entropy
+        return action_logprobs, state_values, dist_entropy, moe_actor_loss, moe_critic_loss
 
 
 class PPO:
     def __init__(self, lr_actor, lr_critic, batch_size, gamma, K_epochs, eps_clip,
-                 has_continuous_action_space, action_std_init=0.6):
+                 has_continuous_action_space, action_std_init, num_experts, noisy_gating, k):
 
         self.has_continuous_action_space = has_continuous_action_space
 
@@ -111,17 +116,19 @@ class PPO:
 
         # self.buffer = RolloutBuffer()
 
-        self.policy = ActorCritic(has_continuous_action_space, action_std_init).to(device)
+        self.policy = ActorCritic(has_continuous_action_space, action_std_init,
+                                  num_experts, noisy_gating, k).to(device)
         self.optimizer = torch.optim.Adam([
             {'params': self.policy.actor.parameters(), 'lr': lr_actor},
             {'params': self.policy.critic.parameters(), 'lr': lr_critic}
         ])
-        # state_dict1 = torch.load("PPO_preTrained/UAVnavigation/PPO_UAVnavigation_0_2_best.pth")
+        # state_dict1 = torch.load("PPO_preTrained/UAVnavigation/PPO_UAVnavigation_0_28_best.pth")
         # print(state_dict1["best_acc"])
         # state_dict1 = state_dict1["state_dict"]
         # self.policy.load_state_dict(state_dict1, strict=False)
 
-        self.policy_old = ActorCritic(has_continuous_action_space, action_std_init).to(device)
+        self.policy_old = ActorCritic(has_continuous_action_space, action_std_init,
+                                      num_experts, noisy_gating, k).to(device)
         self.policy_old.load_state_dict(self.policy.state_dict())
 
         self.MseLoss = nn.MSELoss()
@@ -157,6 +164,7 @@ class PPO:
         if self.has_continuous_action_space:
             with torch.no_grad():
                 state = torch.FloatTensor(state).to(device)
+                # state = transform_surf_features(state).to(device)
                 action, action_logprob, state_val = self.policy_old.act(state, ppo_agent_lock)
 
             # self.buffer.states.append(path_list)
@@ -256,7 +264,8 @@ class PPO:
                 # The probability of taking the old action in the new distribution,
                 # the reward predicted by the new strategy,
                 # and the probability distribution entropy of the new strategy
-                logprobs, state_values, dist_entropy = self.policy.evaluate(old_states, old_actions)
+                logprobs, state_values, dist_entropy, moe_actor_loss, moe_critic_loss = \
+                    self.policy.evaluate(old_states, old_actions)
 
                 # match state_values tensor dimensions with rewards tensor
                 state_values = torch.squeeze(state_values)
@@ -277,7 +286,7 @@ class PPO:
                 # Let the V predicted by the new strategy be equal to the cumulative reward as much as possible;
                 # Increase probability distribution entropy as much as possible
                 loss = -torch.min(surr1, surr2) + 0.5 * self.MseLoss(state_values, old_rewards) \
-                       - 0.01 * dist_entropy
+                       - 0.01 * dist_entropy + moe_actor_loss + moe_critic_loss
 
                 # take gradient step
                 self.optimizer.zero_grad()
@@ -292,17 +301,115 @@ class PPO:
         # Copy new weights into old policy
         self.policy_old.load_state_dict(self.policy.state_dict())
 
-    def save(self, time_step, best_acc, checkpoint_path):
+    def save(self, time_step, best_acc, best_diff, best_spl, checkpoint_path):
         if best_acc == -1:
             torch.save(self.policy_old.state_dict(), checkpoint_path)
         else:
             state = {
-                    'time_step': time_step,
-                    'state_dict': self.policy_old.state_dict(),
-                    'best_acc': best_acc,
-                }
+                'time_step': time_step,
+                'state_dict': self.policy_old.state_dict(),
+                'best_acc': best_acc,
+                'best_diff': best_diff,
+                'best_spl': best_spl
+            }
             torch.save(state, checkpoint_path)
 
     def load(self, checkpoint_path):
         self.policy_old.load_state_dict(torch.load(checkpoint_path, map_location=lambda storage, loc: storage))
         self.policy.load_state_dict(torch.load(checkpoint_path, map_location=lambda storage, loc: storage))
+
+
+class MultiExpertPPO:
+    def __init__(self, expert_list, avg_or_random, lr_actor, lr_critic, batch_size, gamma, K_epochs, eps_clip,
+                 has_continuous_action_space, action_std_init=0.6):
+
+        self.has_continuous_action_space = has_continuous_action_space
+
+        if has_continuous_action_space:
+            self.action_std = action_std_init
+
+        self.batch_size = batch_size
+        self.gamma = gamma
+        self.eps_clip = eps_clip
+        self.K_epochs = K_epochs
+
+        # self.buffer = RolloutBuffer()
+        self.experts = []
+        self.avg_or_random = avg_or_random
+        for expert_idx in expert_list:
+            self.policy_idx = ActorCritic(has_continuous_action_space, action_std_init).to(device)
+            self.optimizer = torch.optim.Adam([
+                {'params': self.policy_idx.actor.parameters(), 'lr': lr_actor},
+                {'params': self.policy_idx.critic.parameters(), 'lr': lr_critic}
+            ])
+            state_dict1 = torch.load("PPO_preTrained/UAVnavigation/PPO_UAVnavigation_0_" +
+                                     str(expert_idx) + "_best.pth")
+            print(state_dict1["best_acc"])
+            state_dict1 = state_dict1["state_dict"]
+            self.policy_idx.load_state_dict(state_dict1, strict=False)
+
+            self.policy_old_idx = ActorCritic(has_continuous_action_space, action_std_init).to(device)
+            self.policy_old_idx.load_state_dict(self.policy_idx.state_dict())
+            self.experts.append(self.policy_old_idx)
+
+        self.MseLoss = nn.MSELoss()
+
+    def select_action(self, state, path_list, episode_dir, ppo_agent_lock):
+
+        if self.has_continuous_action_space:
+            with torch.no_grad():
+                state = torch.FloatTensor(state).to(device)
+                # state = transform_surf_features(state).to(device)
+                lat_action = 0
+                lon_action = 0
+
+                if self.avg_or_random:
+                    for expert_policy_old in self.experts:
+                        action, action_logprob, state_val = expert_policy_old.act(state, ppo_agent_lock)
+                        lat_action += action[0, 0].item()
+                        lon_action += action[0, 1].item()
+                    lat_action /= len(self.experts)
+                    lon_action /= len(self.experts)
+                else:
+                    random_idx = random.randint(0, len(self.experts) - 1)
+                    action, action_logprob, state_val = self.experts[random_idx].act(state, ppo_agent_lock)
+                    lat_action = action[0, 0].item()
+                    lon_action = action[0, 1].item()
+
+            record_file = os.path.join(episode_dir, "record.txt")
+            with open(record_file, "a") as file1:
+                file1.write(path_list[0] + " " + path_list[1]
+                            + " " + str(lat_action) + " " + str(lon_action)
+                            + " " + str(action_logprob.item())
+                            + " " + str(state_val.item())
+                            + "\n")
+            file1.close()
+
+            return np.array((lat_action, lon_action), dtype=np.float32)
+        else:
+            with torch.no_grad():
+                state = torch.FloatTensor(state).to(device)
+                action, action_logprob, state_val = self.policy_old.act(state)
+
+            # self.buffer.states.append(state)
+            # self.buffer.actions.append(action)
+            # self.buffer.logprobs.append(action_logprob)
+            # self.buffer.state_values.append(state_val)
+
+            return action.item()
+
+    def save(self, time_step, best_acc, checkpoint_path):
+        if best_acc == -1:
+            torch.save(self.experts[0].state_dict(), checkpoint_path)
+        else:
+            state = {
+                'time_step': time_step,
+                'state_dict': self.experts[0].state_dict(),
+                'best_acc': best_acc,
+            }
+            torch.save(state, checkpoint_path)
+
+
+if __name__ == '__main__':
+    state_dict = torch.load("PPO_preTrained/UAVnavigation/PPO_UAVnavigation_0_3_best.pth")
+    print(state_dict)

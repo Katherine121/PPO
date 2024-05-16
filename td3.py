@@ -6,7 +6,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from cor import IMG_SIZE, PATCH_SIZE
-from vit import Actor, ViT
+from actor_critic import Actor
+from vit import ViT
 from dataset import DDPGTD3dataset
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

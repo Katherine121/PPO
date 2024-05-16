@@ -4,6 +4,8 @@ from PIL import Image
 from torch.utils.data import Dataset
 from torchvision import transforms
 
+from cor import IMG_SIZE
+
 
 class UAVdataset(Dataset):
     def __init__(self, path_list, buffer_actions, buffer_logprobs, buffer_advantages, rewards):
@@ -18,7 +20,7 @@ class UAVdataset(Dataset):
         normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                          std=[0.229, 0.224, 0.225])
         self.val_transform = transforms.Compose([
-            transforms.Resize((256, 256)),
+            transforms.Resize((IMG_SIZE, IMG_SIZE)),
             transforms.ToTensor(),
             normalize,
         ])
@@ -64,7 +66,7 @@ class DDPGTD3dataset(Dataset):
         normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                          std=[0.229, 0.224, 0.225])
         self.val_transform = transforms.Compose([
-            transforms.Resize((256, 256)),
+            transforms.Resize((IMG_SIZE, IMG_SIZE)),
             transforms.ToTensor(),
             normalize,
         ])
@@ -119,7 +121,7 @@ class SURFdataset(Dataset):
         normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                          std=[0.229, 0.224, 0.225])
         self.val_transform = transforms.Compose([
-            transforms.Resize((256, 256)),
+            transforms.Resize((IMG_SIZE, IMG_SIZE)),
             transforms.ToTensor(),
             normalize,
         ])

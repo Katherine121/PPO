@@ -6,6 +6,9 @@ from einops import rearrange, repeat
 from einops.layers.torch import Rearrange
 from thop import profile
 
+from cor import *
+from moe_ffn import MoE_FFN
+
 
 # helpers
 
@@ -41,7 +44,7 @@ class FeedForward(nn.Module):
 
 
 class Attention(nn.Module):
-    def __init__(self, dim, heads=8, dim_head=64, dropout=0.):
+    def __init__(self, dim, heads, dim_head, dropout=0.):
         super().__init__()
         inner_dim = dim_head * heads
         project_out = not (heads == 1 and dim_head == dim)
@@ -74,17 +77,28 @@ class Transformer(nn.Module):
     def __init__(self, dim, depth, heads, dim_head, mlp_dim, dropout=0.):
         super().__init__()
         self.layers = nn.ModuleList([])
-        for i in range(0, depth):
+        for i in range(0, 1):
             self.layers.append(nn.ModuleList([
-                PreNorm(dim, Attention(dim, heads=heads, dim_head=dim_head, dropout=dropout)),
-                PreNorm(dim, FeedForward(dim, mlp_dim, dropout=dropout))
+                PreNorm(dim, Attention(dim=dim, heads=heads, dim_head=dim_head, dropout=dropout)),
+                PreNorm(dim, MoE_FFN(num_experts=4, noisy_gating=True, k=1,
+                                     dim=dim, mlp_dim=mlp_dim, dropout=dropout))
+            ]))
+        for i in range(1, depth):
+            self.layers.append(nn.ModuleList([
+                PreNorm(dim, Attention(dim=dim, heads=heads, dim_head=dim_head, dropout=dropout)),
+                PreNorm(dim, FeedForward(dim=dim, hidden_dim=mlp_dim, dropout=dropout))
             ]))
 
     def forward(self, x):
-        for attn, ff in self.layers:
-            x = attn(x) + x
-            x = ff(x) + x
-        return x
+        attn, ff = self.layers[0]
+        x = attn(x) + x
+        y, loss = ff(x)
+        y += x
+
+        attn, ff = self.layers[1]
+        y = attn(y) + y
+        y = ff(y) + y
+        return y, loss
 
 
 class ViT(nn.Module):
@@ -128,38 +142,39 @@ class ViT(nn.Module):
         )
 
     def forward(self, img):
-        if len(img.shape) == 4:
-            x = self.to_patch_embedding(img)
-            b, n, _ = x.shape
+        # if len(img.shape) == 4:
+        #     x = self.to_patch_embedding(img)
+        #     b, n, _ = x.shape
+        #
+        #     cls_tokens = repeat(self.cls_token, '() n d -> b n d', b=b)
+        #     x = torch.cat((cls_tokens, x), dim=1)
+        #     x += self.pos_embedding[:, :(n + 1)]
+        #     x = self.dropout(x)
+        #
+        #     x = self.transformer(x)
+        #
+        #     x = x.mean(dim=1) if self.pool == 'mean' else x[:, 0]
+        #     img = x.reshape(-1, 2 * self.extractor_dim)
+        #
+        # else:
+        b = img.size(0)
+        # b,len,3,224,224->b*len,3,224,224->b*len,576->b,len,576
+        img = img.reshape(b * 2, 3, IMG_SIZE, IMG_SIZE)
 
-            cls_tokens = repeat(self.cls_token, '() n d -> b n d', b=b)
-            x = torch.cat((cls_tokens, x), dim=1)
-            x += self.pos_embedding[:, :(n + 1)]
-            x = self.dropout(x)
+        x = self.to_patch_embedding(img)
+        _, n, _ = x.shape
 
-            x = self.transformer(x)
+        cls_tokens = repeat(self.cls_token, '() n d -> b n d', b=b * 2)
+        x = torch.cat((cls_tokens, x), dim=1)
+        x += self.pos_embedding[:, :(n + 1)]
+        x = self.dropout(x)
 
-            x = x.mean(dim=1) if self.pool == 'mean' else x[:, 0]
-            img = x.reshape(-1, 2 * self.extractor_dim)
+        x, ffn_loss = self.transformer(x)
 
-        else:
-            b = img.size(0)
-            img = img.reshape(b * 2, 3, self.height, self.height)
+        x = x.mean(dim=1) if self.pool == 'mean' else x[:, 0]
+        img = x.reshape(b, 2 * self.extractor_dim)
 
-            x = self.to_patch_embedding(img)
-            _, n, _ = x.shape
-
-            cls_tokens = repeat(self.cls_token, '() n d -> b n d', b=b * 2)
-            x = torch.cat((cls_tokens, x), dim=1)
-            x += self.pos_embedding[:, :(n + 1)]
-            x = self.dropout(x)
-
-            x = self.transformer(x)
-
-            x = x.mean(dim=1) if self.pool == 'mean' else x[:, 0]
-            img = x.reshape(b, 2 * self.extractor_dim)
-
-        return self.mlp_head(img)
+        return self.mlp_head(img), ffn_loss
 
 
 class SURFNet(nn.Module):
@@ -207,62 +222,14 @@ class MobileNet(nn.Module):
             img = x.reshape(-1, 2 * self.extractor_dim)
         else:
             b = img.size(0)
-            x = self.backbone(img.view(b * 2, 3, 256, 256))
+            x = self.backbone(img.view(b * 2, 3, IMG_SIZE, IMG_SIZE))
             img = x.reshape(b, 2 * self.extractor_dim)
 
         return self.mlp_head(img)
 
 
-class Actor(nn.Module):
-    def __init__(self, checkpoint_path=None):
-        super().__init__()
-        self.actor = ViT(image_size=256,
-                         patch_size=32,
-                         dim=64,
-                         depth=4,
-                         heads=2,
-                         dim_head=64,
-                         mlp_dim=128,
-                         dropout=0.,
-                         emb_dropout=0.)
-        # self.actor = MobileNet()
-        # print(self.actor)
-        # flops 51.21M, params 0.41M
-        flops, params = profile(self.actor, (torch.randn(2, 3, 256, 256), ))
-        print('flops: ', flops, 'params: ', params)
-        print('flops: %.2f M, params: %.2f M' % (flops / 1000000.0, params / 1000000.0))
-        if checkpoint_path is not None:
-            state_dict1 = torch.load(checkpoint_path)
-            state_dict1 = state_dict1["state_dict"]
-            state_dict2 = {}
-            for name, param in state_dict1.items():
-                state_dict2[name[len("module:"):]] = param
-            self.actor.load_state_dict(state_dict2)
-
-    def forward(self, img):
-        return self.actor(img)
-
-
-class Critic(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.critic = ViT(image_size=256,
-                          patch_size=32,
-                          dim=64,
-                          depth=4,
-                          heads=2,
-                          dim_head=64,
-                          mlp_dim=128,
-                          dropout=0.,
-                          emb_dropout=0.)
-        # self.critic = MobileNet()
-        self.critic.mlp_head = nn.Sequential(
-            nn.Linear(2 * self.critic.extractor_dim, 64),
-            nn.Tanh(),
-            nn.Linear(64, 64),
-            nn.Tanh(),
-            nn.Linear(64, 1)
-        )
-
-    def forward(self, img):
-        return self.critic(img)
+if __name__ == '__main__':
+    model = timm.models.vit_base_patch32_224()
+    flops, params = profile(model, (torch.randn(1, 3, 224, 224), ))
+    print('flops: ', flops, 'params: ', params)
+    print('flops: %.2f M, params: %.2f M' % (flops / 1000000.0, params / 1000000.0))

@@ -88,7 +88,7 @@ def screenshot(paths, labels, new_lat, new_lon, cur_height, img_aug, path):
     pic = Image.open(paths[idx])
     pic = pic.crop((new_lon_pixel - pixel_w // 2, new_lat_pixel - pixel_h // 2,
                     new_lon_pixel + pixel_w // 2, new_lat_pixel + pixel_h // 2))
-    # pic = pic.resize((256, 256))
+    # pic = pic.resize((IMG_SIZE, IMG_SIZE))
     # pic = pic.rotate(90 - ang)
 
     # add style noise to the new image
@@ -103,7 +103,7 @@ def screenshot(paths, labels, new_lat, new_lon, cur_height, img_aug, path):
     normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                      std=[0.229, 0.224, 0.225])
     val_transform = transforms.Compose([
-        transforms.Resize((256, 256)),
+        transforms.Resize((IMG_SIZE, IMG_SIZE)),
         transforms.ToTensor(),
         normalize,
     ])
@@ -127,7 +127,7 @@ def screenshot(paths, labels, new_lat, new_lon, cur_height, img_aug, path):
 class MyUAVgym(gym.Env):
     def __init__(self, dis, done_thresh, max_step_num, points, paths, path_labels):
         self.action_space = spaces.Box(low=-1.0, high=+1.0, shape=(2,), dtype=np.float32)
-        self.observation_space = spaces.Box(low=-1.0, high=+1.0, shape=(2, 3, 256, 256,), dtype=np.float32)
+        self.observation_space = spaces.Box(low=-1.0, high=+1.0, shape=(2, 3, IMG_SIZE, IMG_SIZE,), dtype=np.float32)
         self.start_pos_i = 0
         self.start_pos = []
         self.end_pos = []
@@ -137,6 +137,7 @@ class MyUAVgym(gym.Env):
         self.end_path = ""
         self.cur_path = ""
         self.last_diff = 0
+        self.last_angle = []
         self.test_num = 0
 
         self.dis = dis
@@ -165,21 +166,25 @@ class MyUAVgym(gym.Env):
         self.step_num = 0
         self.test_num = self.points[i][0]
         self.start_pos_i = self.points[i][1]
-        self.start_pos = self.points[i][2]
-        self.end_pos = self.points[i][3]
-        self.height = self.points[i][4]
-        self.noise_index = self.points[i][5]
+        self.end_pos_i = self.points[i][2]
+        self.start_pos = self.points[i][3]
+        self.end_pos = self.points[i][4]
+        self.height = self.points[i][5]
+        self.noise_index = self.points[i][6]
 
         self.episode_dir = dataset_dir + "path" + str(self.test_num) + str(",") \
-                           + str(self.start_pos_i) + "," \
+                           + str(self.start_pos_i) + "," + str(self.end_pos_i) + "," \
                            + "height" + str(self.height) + "," \
                            + self.NOISE_DB[self.noise_index][0] + "-" + self.NOISE_DB[self.noise_index][1]
         if os.path.exists(self.episode_dir) is False:
             os.makedirs(self.episode_dir, exist_ok=True)
 
         # 1
-        last_lat = self.start_pos[0] + random.uniform(a=-1, b=1) * self.HEIGHT_NOISE[self.height] / 111000
-        last_lon = self.start_pos[1] + random.uniform(a=-1, b=1) * self.HEIGHT_NOISE[self.height] / 111000 \
+        # 起点位置加噪声，高度随机选择档位，根据环境调整噪声
+        # 中间位置根据环境调整噪声，高度随机选择档位，根据环境调整噪声
+        # 终点位置不加噪声，高度不加噪声
+        last_lat = self.start_pos[0] + random.uniform(a=-1, b=1) * NOISE_STEP / 111000
+        last_lon = self.start_pos[1] + random.uniform(a=-1, b=1) * NOISE_STEP / 111000 \
                    / math.cos(last_lat / 180 * math.pi)
         self.cur_pos = [last_lat, last_lon]
         # last_lat = self.start_pos[0]
@@ -189,13 +194,14 @@ class MyUAVgym(gym.Env):
         # 2
         self.image_augment = ImageAugment(style_idx=self.NOISE_DB[self.noise_index][0],
                                           shift_idx=self.NOISE_DB[self.noise_index][1])
-        shift = self.image_augment.forward_shift(self.HEIGHT_NOISE[self.height])
-        self.cur_height = self.height + shift[2]
+        shift = self.image_augment.forward_shift(NOISE_STEP)
+        self.cur_height = h_list[random.randint(a=0, b=4)] + shift[2]
 
         # 3
         lat_diff = (self.end_pos[0] - self.cur_pos[0]) * 111000
         lon_diff = (self.end_pos[1] - self.cur_pos[1]) * 111000 * math.cos(self.cur_pos[0] / 180 * math.pi)
         self.last_diff = math.sqrt(lat_diff * lat_diff + lon_diff * lon_diff)
+        self.last_angle = [lat_diff / self.last_diff, lon_diff / self.last_diff]
 
         # screenshot the start point image
         # 4
@@ -225,23 +231,32 @@ class MyUAVgym(gym.Env):
 
         # add shift noise to the origin position
         # 2
-        shift = self.image_augment.forward_shift(self.HEIGHT_NOISE[self.height])
+        shift = self.image_augment.forward_shift(NOISE_STEP)
         self.cur_pos[0] += shift[0]
         self.cur_pos[1] += shift[1]
-        self.cur_height = self.height + shift[2]
+        self.cur_height = h_list[random.randint(a=0, b=4)] + shift[2]
 
         # calculate done based on the next cur_pos, destination
         # 3
         lat_diff = (self.end_pos[0] - self.cur_pos[0]) * 111000
         lon_diff = (self.end_pos[1] - self.cur_pos[1]) * 111000 * math.cos(self.cur_pos[0] / 180 * math.pi)
         diff = math.sqrt(lat_diff * lat_diff + lon_diff * lon_diff)
+        angle = [lat_diff / self.last_diff, lon_diff / self.last_diff]
         done = diff <= self.done_thresh or self.step_num == self.max_step_num - 1
 
         # calculate reward based on the next cur_pos, destination
         # reward1 = -math.pow(min(1, diff / 3000), 2.8)
         # -1~+1
-        reward1 = - (diff - self.last_diff) / self.dis
+        reward1 = (self.last_diff - diff) / self.dis + \
+                  torch.cosine_similarity(torch.tensor(action), torch.tensor(self.last_angle), dim=-1).item()
+        # reward1 = (self.last_diff - diff) / self.dis + \
+        #           torch.cosine_similarity(torch.tensor(action), torch.tensor(self.last_angle), dim=-1).item() + \
+        #           1 / self.step_num
+        # reward1 = (self.last_diff - diff) / self.dis + \
+        #           torch.cosine_similarity(torch.tensor(action), torch.tensor(self.last_angle), dim=-1).item() - \
+        #           math.log10(self.step_num)
         self.last_diff = diff
+        self.last_angle = angle
         reward = reward1
         # successfully arrive
         success = 0
@@ -268,7 +283,7 @@ class MyUAVgym(gym.Env):
 
             reward = reward1 - 10
             self.step_num += 1
-            return state, [self.cur_path, self.end_path], reward, True, {}, success, success_diff
+            return state, [self.cur_path, self.end_path], reward, True, {}, success, success_diff, self.step_num
         # elif diff >= 2000:
         #     self.cur_pic = new_img
         #     state = self.get_img_input()
@@ -280,7 +295,7 @@ class MyUAVgym(gym.Env):
             state = self.get_img_input()
 
             self.step_num += 1
-            return state, [self.cur_path, self.end_path], reward, done, {}, success, success_diff
+            return state, [self.cur_path, self.end_path], reward, done, {}, success, success_diff, self.step_num
 
     def render(self, mode='human'):
         pass

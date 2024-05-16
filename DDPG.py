@@ -3,6 +3,7 @@ import os
 import random
 import torch.nn.functional as F
 
+from actor_critic import Actor
 from vit import *
 from dataset import DDPGTD3dataset
 

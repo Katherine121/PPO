@@ -1,77 +1,16 @@
-import os
+import argparse
 import random
-import shutil
-import math
 import torch
 from torch.backends import cudnn
 import numpy as np
 import threading
 from datetime import datetime
 
-from PPO import PPO
+from PPO import PPO, MultiExpertPPO
 from DDPG import DDPG
 from td3 import TD3
 from mygym import MyUAVgym
 from cor import *
-
-
-def del_file(path):
-    if not os.listdir(path):
-        print('empty directory!')
-    else:
-        for i in os.listdir(path):
-            path_file = os.path.join(path, i)
-            if os.path.isfile(path_file):
-                os.remove(path_file)
-            else:
-                del_file(path_file)
-                shutil.rmtree(path_file)
-
-
-def get_start_end(test_num, num_nodes, radius, center_lat=23.4, center_lon=120.3, ):
-    points = []
-    res = []
-    angle_step = 2 * math.pi / num_nodes
-
-    # num_nodes starting points
-    for i in range(0, num_nodes):
-        angle = i * angle_step
-        lat = round(center_lat + radius * math.sin(angle) / 111000, 8)
-        lon = round(center_lon + radius * math.cos(angle) / 111000 / math.cos(lat / 180 * math.pi), 8)
-        points.append((lat, lon))
-
-    for index in range(0, test_num):
-        for i in range(int(0 * len(points)), int(1 * len(points))):
-            start_point = points[i]
-            end_point = [center_lat, center_lon]
-
-            for h_key in HEIGHT_NOISE.keys():
-                for noise_index in range(0, len(NOISE_DB)):
-                    res.append((index, i, start_point, end_point, h_key, noise_index))
-
-    return res
-
-
-def get_big_map(path):
-    """
-    get the big map gallery
-    :param path: stored path
-    :return: big map paths and center coordinates
-    """
-    paths = []
-    labels = []
-
-    file_path = os.listdir(path)
-    file_path.sort()
-
-    for file in file_path:
-        full_file_path = os.path.join(path, file)
-        paths.append(full_file_path)
-        file = file[:-4]
-        file = file.split(',')
-        labels.append(list(map(eval, [file[0], file[1]])))
-
-    return paths, labels
 
 
 def train_thread(start_episode, end_episode):
@@ -81,26 +20,27 @@ def train_thread(start_episode, end_episode):
     global ideal_total_success_diff
     global noisy_total_success_num
     global noisy_total_success_diff
+    global train_spl
     global print_running_reward
     global i_episode
 
-    env = MyUAVgym(dis=dis, done_thresh=done_thresh, max_step_num=max_ep_len,
+    env = MyUAVgym(dis=args.dis, done_thresh=args.done_thresh, max_step_num=args.max_ep_len,
                    points=train_points, paths=paths, path_labels=path_labels)
-    if random_seed:
-        env.seed(random_seed)
+    if args.random_seed:
+        env.seed(args.random_seed)
 
     # training loop
     for index in range(start_episode, end_episode):
-        if os.path.exists(dataset_dir) is False:
-            os.makedirs(dataset_dir, exist_ok=True)
+        if os.path.exists(args.dataset_dir) is False:
+            os.makedirs(args.dataset_dir, exist_ok=True)
 
-        state, path_list, episode_dir = env.reset(dataset_dir=dataset_dir, index=index)
+        state, path_list, episode_dir = env.reset(dataset_dir=args.dataset_dir, index=index)
         current_ep_reward = 0
 
-        for t in range(1, max_ep_len):
+        for t in range(1, args.max_ep_len):
             # select action with policy
             action = ppo_agent.select_action(state, path_list, episode_dir, ppo_agent_lock)
-            state, path_list, reward, done, _, success, success_diff = env.step(action)
+            state, path_list, reward, done, _, success, success_diff, step_num = env.step(action)
 
             reward_file = os.path.join(episode_dir, "reward.txt")
             with open(reward_file, "a") as file1:
@@ -129,7 +69,9 @@ def train_thread(start_episode, end_episode):
                 noisy_total_success_num += success
                 noisy_total_success_diff += success_diff
             print_running_reward += current_ep_reward
+            train_spl += success * args.best_step_num / max(step_num, args.best_step_num)
             i_episode += 1
+            print(episode_dir)
 
     env.close()
 
@@ -141,31 +83,43 @@ def train():
     global ideal_total_success_diff
     global noisy_total_success_num
     global noisy_total_success_diff
+    global train_spl
     global print_running_reward
     global i_episode
 
     best_acc = 0
-    best_diff = done_thresh
+    best_spl = 0
+    best_diff = args.done_thresh
 
-    while i_episode < max_training_timesteps:
+    while i_episode < args.max_training_timesteps:
         if i_episode >= 1000:
-            cur_acc, cur_diff = validate()
-            if cur_acc > best_acc or (cur_acc == best_acc and cur_diff <= best_diff):
+            cur_acc, cur_diff, cur_spl = validate()
+            if cur_acc > best_acc:
                 best_acc = cur_acc
+                print("saving acc best model at : " + acc_best_path)
+                ppo_agent.save(time_step, best_acc, cur_diff, cur_spl, acc_best_path)
+                print("acc best model saved")
+            if cur_spl > best_spl:
+                best_spl = cur_spl
+                print("saving spl best model at : " + spl_best_path)
+                ppo_agent.save(time_step, cur_acc, cur_diff, best_spl, spl_best_path)
+                print("spl best model saved")
+            if cur_diff < best_diff:
                 best_diff = cur_diff
-                print("saving best model at : " + best_path)
-                ppo_agent.save(time_step, best_acc, best_path)
-                print("best model saved")
+                print("saving diff best model at : " + diff_best_path)
+                ppo_agent.save(time_step, cur_acc, best_diff, cur_spl, diff_best_path)
+                print("diff best model saved")
+
             print("============================================================================================")
-            del_file(dataset_dir)
+            del_file(args.dataset_dir)
 
         # collect data
         # initialize threads
-        episode_of_one_thread = update_timestep // max_thread_num
-        remain = update_timestep % max_thread_num
+        episode_of_one_thread = args.collect_freq // args.max_thread_num
+        remain = args.collect_freq % args.max_thread_num
         threads = []
         end_episode = i_episode
-        for thread_index in range(0, max_thread_num):
+        for thread_index in range(0, args.max_thread_num):
             start_episode = end_episode
             end_episode = start_episode + episode_of_one_thread
             if remain > 0:
@@ -186,12 +140,13 @@ def train():
         # print results
         total_success_num = ideal_total_success_num + noisy_total_success_num
         total_success_diff = ideal_total_success_diff + noisy_total_success_diff
+        cur_spl = train_spl / args.collect_freq
         if total_success_num > 0:
-            cur_acc = total_success_num / update_timestep
+            cur_acc = total_success_num / args.collect_freq
             cur_diff = total_success_diff / total_success_num
 
-            ideal_acc = ideal_total_success_num / (update_timestep / 2)
-            noisy_acc = noisy_total_success_num / (update_timestep / 2)
+            ideal_acc = ideal_total_success_num / (args.collect_freq / 2)
+            noisy_acc = noisy_total_success_num / (args.collect_freq / 2)
 
             if ideal_total_success_num > 0:
                 ideal_diff = ideal_total_success_diff / ideal_total_success_num
@@ -202,31 +157,36 @@ def train():
             else:
                 noisy_diff = 0
 
-            print("total success num is: ", cur_acc)
-            train_acc_f.write('{},{},{},{},{}\n'.format(i_episode, time_step, cur_acc, ideal_acc, noisy_acc))
+            print("total success acc is: ", cur_acc)
+            train_acc_f.write('{},{},{},{},{},{}\n'.format(i_episode, time_step,
+                                                           cur_acc, ideal_acc, noisy_acc, cur_spl))
             train_acc_f.flush()
 
             print("total success diff is: ", cur_diff)
-            train_diff_f.write('{},{},{},{},{}\n'.format(i_episode, time_step, cur_diff, ideal_diff, noisy_diff))
+            train_diff_f.write('{},{},{},{},{}\n'.format(i_episode, time_step,
+                                                         cur_diff, ideal_diff, noisy_diff))
             train_diff_f.flush()
         else:
             cur_acc = 0
-            cur_diff = done_thresh
+            cur_diff = args.done_thresh
 
-            print("total success num is: 0")
-            train_acc_f.write('{},{},{},{},{}\n'.format(i_episode, time_step, cur_acc, cur_acc, cur_acc))
+            print("total success acc is: 0")
+            train_acc_f.write('{},{},{},{},{},{}\n'.format(i_episode, time_step,
+                                                        cur_acc, cur_acc, cur_acc, cur_spl))
             train_acc_f.flush()
 
             print("total success diff is: 0")
-            train_diff_f.write('{},{},{},{},{}\n'.format(i_episode, time_step, cur_diff, cur_diff, cur_diff))
+            train_diff_f.write('{},{},{},{},{}\n'.format(i_episode, time_step,
+                                                         cur_diff, cur_diff, cur_diff))
             train_diff_f.flush()
         ideal_total_success_num = 0
         ideal_total_success_diff = 0
         noisy_total_success_num = 0
         noisy_total_success_diff = 0
+        train_spl = 0
 
         # print average reward till last episode
-        print_avg_reward = print_running_reward / update_timestep
+        print_avg_reward = print_running_reward / args.collect_freq
         print_avg_reward = round(print_avg_reward, 4)
         print("Episode : {} \t\t Timestep : {} \t\t Average Reward : {}".format(i_episode, time_step,
                                                                                 print_avg_reward))
@@ -237,20 +197,20 @@ def train():
 
         # save agent
         print("saving model at : " + checkpoint_path)
-        ppo_agent.save(time_step, -1, checkpoint_path)
+        ppo_agent.save(time_step, cur_acc, cur_diff, cur_spl, checkpoint_path)
         print("model saved")
         end_time = datetime.now().replace(microsecond=0)
         print("Total training time  : ", end_time - start_time)
         print("============================================================================================")
 
         # update agent
-        ppo_agent.update(dataset_dir)
-        del_file(dataset_dir)
+        ppo_agent.update(args.dataset_dir)
+        del_file(args.dataset_dir)
         print("============================================================================================")
 
         # if continuous action space; then decay action std of ouput action distribution
-        if has_continuous_action_space and i_episode % action_std_decay_freq == 0:
-            ppo_agent.decay_action_std(action_std_decay_rate, min_action_std)
+        if has_continuous_action_space and i_episode % args.action_std_decay_freq == 0:
+            ppo_agent.decay_action_std(args.action_std_decay_rate, args.min_action_std)
 
 
 def validate_thread(start_episode, end_episode):
@@ -260,26 +220,27 @@ def validate_thread(start_episode, end_episode):
     global ideal_validate_total_success_diff
     global noisy_validate_total_success_num
     global noisy_validate_total_success_diff
+    global validate_spl
     global validate_print_running_reward
     global validate_i_episode
 
-    env = MyUAVgym(dis=dis, done_thresh=done_thresh, max_step_num=max_ep_len,
+    env = MyUAVgym(dis=args.dis, done_thresh=args.done_thresh, max_step_num=args.max_ep_len,
                    points=validate_points, paths=paths, path_labels=path_labels)
-    if random_seed:
-        env.seed(random_seed)
+    if args.random_seed:
+        env.seed(args.random_seed)
 
     # training loop
     for index in range(start_episode, end_episode):
-        if os.path.exists(dataset_dir) is False:
-            os.makedirs(dataset_dir, exist_ok=True)
+        if os.path.exists(args.dataset_dir) is False:
+            os.makedirs(args.dataset_dir, exist_ok=True)
 
-        state, path_list, episode_dir = env.reset(dataset_dir=dataset_dir, index=index)
+        state, path_list, episode_dir = env.reset(dataset_dir=args.dataset_dir, index=index)
         current_ep_reward = 0
 
-        for t in range(1, max_ep_len):
+        for t in range(1, args.max_ep_len):
             # select action with policy
             action = ppo_agent.select_action(state, path_list, episode_dir, ppo_agent_lock)
-            state, path_list, reward, done, _, success, success_diff = env.step(action)
+            state, path_list, reward, done, _, success, success_diff, step_num = env.step(action)
 
             reward_file = os.path.join(episode_dir, "reward.txt")
             with open(reward_file, "a") as file1:
@@ -308,6 +269,7 @@ def validate_thread(start_episode, end_episode):
                 noisy_validate_total_success_num += success
                 noisy_validate_total_success_diff += success_diff
             validate_print_running_reward += current_ep_reward
+            validate_spl += success * args.best_step_num / max(step_num, args.best_step_num)
             validate_i_episode += 1
 
     env.close()
@@ -320,16 +282,17 @@ def validate():
     global noisy_validate_total_success_num
     global ideal_validate_total_success_diff
     global noisy_validate_total_success_diff
+    global validate_spl
     global validate_print_running_reward
     global validate_i_episode
 
     # collect data
     # initialize threads
-    episode_of_one_thread = validate_episode_num // max_thread_num
-    remain = validate_episode_num % max_thread_num
+    episode_of_one_thread = args.validate_episode_num // args.max_thread_num
+    remain = args.validate_episode_num % args.max_thread_num
     threads = []
     end_episode = validate_i_episode
-    for thread_index in range(0, max_thread_num):
+    for thread_index in range(0, args.max_thread_num):
         start_episode = end_episode
         end_episode = start_episode + episode_of_one_thread
         if remain > 0:
@@ -350,12 +313,13 @@ def validate():
     # print results
     validate_total_success_num = ideal_validate_total_success_num + noisy_validate_total_success_num
     validate_total_success_diff = ideal_validate_total_success_diff + noisy_validate_total_success_diff
+    cur_spl = validate_spl / args.validate_episode_num
     if validate_total_success_num > 0:
-        cur_acc = validate_total_success_num / validate_episode_num
+        cur_acc = validate_total_success_num / args.validate_episode_num
         cur_diff = validate_total_success_diff / validate_total_success_num
 
-        ideal_acc = ideal_validate_total_success_num / (validate_episode_num / 2)
-        noisy_acc = noisy_validate_total_success_num / (validate_episode_num / 2)
+        ideal_acc = ideal_validate_total_success_num / (args.validate_episode_num / 2)
+        noisy_acc = noisy_validate_total_success_num / (args.validate_episode_num / 2)
 
         if ideal_validate_total_success_num > 0:
             ideal_diff = ideal_validate_total_success_diff / ideal_validate_total_success_num
@@ -366,31 +330,39 @@ def validate():
         else:
             noisy_diff = 0
 
-        print("total success num is: ", cur_acc)
-        val_acc_f.write('{},{},{},{},{}\n'.format(validate_i_episode, validate_time_step, cur_acc, ideal_acc, noisy_acc))
+        print("total success acc is: ", cur_acc)
+        val_acc_f.write(
+            '{},{},{},{},{},{}\n'.format(validate_i_episode, validate_time_step,
+                                         cur_acc, ideal_acc, noisy_acc, cur_spl))
         val_acc_f.flush()
 
         print("total success diff is: ", cur_diff)
-        val_diff_f.write('{},{},{},{},{}\n'.format(validate_i_episode, validate_time_step, cur_diff, ideal_diff, noisy_diff))
+        val_diff_f.write(
+            '{},{},{},{},{}\n'.format(validate_i_episode, validate_time_step,
+                                         cur_diff, ideal_diff, noisy_diff))
         val_diff_f.flush()
     else:
         cur_acc = 0
-        cur_diff = done_thresh
+        cur_diff = args.done_thresh
 
-        print("total success num is: 0")
-        val_acc_f.write('{},{},{},{},{}\n'.format(validate_i_episode, validate_time_step, cur_acc, cur_acc, cur_acc))
+        print("total success acc is: 0")
+        val_acc_f.write('{},{},{},{},{},{}\n'.format(validate_i_episode, validate_time_step,
+                                                     cur_acc, cur_acc, cur_acc, cur_spl))
         val_acc_f.flush()
 
         print("total success diff is: 0")
-        val_diff_f.write('{},{},{},{},{}\n'.format(validate_i_episode, validate_time_step, cur_diff, cur_diff, cur_diff))
+        val_diff_f.write(
+            '{},{},{},{},{}\n'.format(validate_i_episode, validate_time_step,
+                                         cur_diff, cur_diff, cur_diff))
         val_diff_f.flush()
     ideal_validate_total_success_num = 0
     ideal_validate_total_success_diff = 0
     noisy_validate_total_success_num = 0
     noisy_validate_total_success_diff = 0
+    validate_spl = 0
 
     # print average reward till last episode
-    print_avg_reward = validate_print_running_reward / validate_episode_num
+    print_avg_reward = validate_print_running_reward / args.validate_episode_num
     print_avg_reward = round(print_avg_reward, 4)
     print("Episode : {} \t\t Timestep : {} \t\t Average Reward : {}".format(validate_i_episode, validate_time_step,
                                                                             print_avg_reward))
@@ -399,161 +371,176 @@ def validate():
     validate_print_running_reward = 0
     print("============================================================================================")
 
-    return cur_acc, cur_diff
+    return cur_acc, cur_diff, cur_spl
 
 
-# ==============================================================================
+# def test_multi_expert():
+#     global ppo_agent
+#     global time_step
+#     global ideal_total_success_num
+#     global ideal_total_success_diff
+#     global noisy_total_success_num
+#     global noisy_total_success_diff
+#     global print_running_reward
+#     global i_episode
+#
+#     best_acc = 0
+#     best_diff = args.done_thresh
+#
+#     cur_acc, cur_diff = validate()
+#     if cur_acc > best_acc or (cur_acc == best_acc and cur_diff <= best_diff):
+#         best_acc = cur_acc
+#         best_diff = cur_diff
+#         print("saving best model at : " + best_path)
+#         ppo_agent.save(time_step, best_acc, best_path)
+#         print("best model saved")
+#     print("============================================================================================")
+#     del_file(args.dataset_dir)
+
+
+parser = argparse.ArgumentParser(description='PyTorch Training')
+
+parser.add_argument('--run_num', type=int)
+parser.add_argument('--server_path', type=str, default="../../../mnt/nfs/")
+parser.add_argument('--bigmap_dir', type=str, default="wyx/bigmap")
+parser.add_argument('--dataset_dir', type=str, default="wyx/ppo/datasets")
+parser.add_argument('--log_dir', type=str, default="PPO_logs")
+parser.add_argument('--save_dir', type=str, default="PPO_preTrained")
+parser.add_argument('--max_ep_len', type=int, default=256)
+parser.add_argument('--collect_freq', type=int, default=0)
+parser.add_argument('--train_test_num', type=int, default=5)
+parser.add_argument('--train_num_nodes', type=int, default=20)
+parser.add_argument('--validate_test_num', type=int, default=1)
+parser.add_argument('--validate_num_nodes', type=int, default=100)
+parser.add_argument('--radius', type=int, default=1000)
+parser.add_argument('--update_episode_num', type=int)
+parser.add_argument('--validate_episode_num', type=int)
+
+parser.add_argument('--K_epochs', type=int, default=30)
+parser.add_argument('--batch_size', type=int, default=128)
+parser.add_argument('--lr_actor', type=int, default=0.0003)
+parser.add_argument('--lr_critic', type=int, default=0.001)
+parser.add_argument('--max_training_timesteps', type=int, default=200)
+parser.add_argument('--dis', type=int, default=100)
+parser.add_argument('--done_thresh', type=int, default=50)
+parser.add_argument('--max_thread_num', type=int, default=8)
+parser.add_argument('--random_seed', type=int, default=0)
+# moe
+parser.add_argument('--num_experts', type=int, default=5)
+parser.add_argument('--noisy_gating', type=bool, default=True)
+parser.add_argument('--k', type=int, default=1)
+
+parser.add_argument('--action_std', type=int, default=0.6)
+parser.add_argument('--action_std_decay_rate', type=int, default=0.05)
+parser.add_argument('--min_action_std', type=int, default=0.1)
+parser.add_argument('--action_std_decay_freq', type=int, default=2.5e5)
+parser.add_argument('--eps_clip', type=int, default=0.2)
+parser.add_argument('--gamma', type=int, default=0.99)
+parser.add_argument('--best_step_num', type=int)
+
+args = parser.parse_args()
+print(args)
+
 env_name = "UAVnavigation"
 has_continuous_action_space = True  # continuous action space; else discrete
 
-run_num = 22
-data = "../../../xxx/xxx/"
-bigmap_dir = data + "xxx/bigmap"
-ppo_supervised_dataset_dir = data + "xxx/ppo_supervised_data" + str(run_num) + "/"
-if os.path.exists(ppo_supervised_dataset_dir) is False:
-    os.makedirs(ppo_supervised_dataset_dir, exist_ok=True)
+args.bigmap_dir = args.server_path + args.bigmap_dir
+args.update_episode_num = args.train_test_num * args.train_num_nodes * \
+                          len(HEIGHT_NOISE) * len(NOISE_DB)
+args.collect_freq = args.update_episode_num
+args.validate_episode_num = args.validate_test_num * args.validate_num_nodes * \
+                            len(HEIGHT_NOISE) * len(NOISE_DB)
 
-max_ep_len = 256  # max timesteps in one episode
-train_test_num = 5
-train_num_nodes = 20
-validate_test_num = 1
-validate_num_nodes = 100
-radius = 1000
-update_timestep = train_test_num * train_num_nodes * len(HEIGHT_NOISE) * len(NOISE_DB) # update policy every n timesteps
-validate_episode_num = validate_test_num * validate_num_nodes * len(HEIGHT_NOISE) * len(NOISE_DB)
-K_epochs = 30  # update policy for K epochs in one PPO update
-batch_size = 128
-lr_actor = 0.0003  # learning rate for actor network
-lr_critic = 0.001  # learning rate for critic network
-max_training_timesteps = 200 * update_timestep  # break training loop if timeteps > max_training_timesteps
+args.max_training_timesteps = args.max_training_timesteps * args.update_episode_num  # break training loop if timeteps > args.max_training_timesteps
+args.action_std_decay_freq = int(
+    args.action_std_decay_freq / args.max_ep_len)  # action_std decay frequency (in num timesteps)
 
-dis = 100
-done_thresh = 50
-max_thread_num = 8
+args.best_step_num = int(args.radius / args.dis)
 
-random_seed = 0  # set random seed if required (0 = no random seed)
-# ==============================================================================
+# bigmap
+paths, path_labels = get_big_map(path=args.bigmap_dir)
 
-# ==============================================================================
-action_std = 0.6  # starting std for action distribution (Multivariate Normal)
-action_std_decay_rate = 0.05  # linearly decay action_std (action_std = action_std - action_std_decay_rate)
-min_action_std = 0.1  # minimum action_std (stop decay after action_std <= min_action_std)
-action_std_decay_freq = int(2.5e5 / max_ep_len)  # action_std decay frequency (in num timesteps)
-
-eps_clip = 0.2  # clip parameter for PPO
-gamma = 0.99  # discount factor
-
-# ==============================================================================
-
-#### log files for multiple runs are NOT overwritten
-log_dir = "PPO_logs"
-if not os.path.exists(log_dir):
-    os.makedirs(log_dir, exist_ok=True)
-
-log_dir = log_dir + '/' + env_name + '/'
-if not os.path.exists(log_dir):
-    os.makedirs(log_dir, exist_ok=True)
-
-#### create new log file for each run
-
-train_log_f_name = log_dir + '/PPO_' + env_name + "_trainlog_" + str(run_num) + ".csv"
-train_diff_f_name = log_dir + '/PPO_' + env_name + "_traindiff_" + str(run_num) + ".csv"
-train_acc_f_name = log_dir + '/PPO_' + env_name + "_trainacc_" + str(run_num) + ".csv"
-val_log_f_name = log_dir + '/PPO_' + env_name + "_vallog_" + str(run_num) + ".csv"
-val_diff_f_name = log_dir + '/PPO_' + env_name + "_valdiff_" + str(run_num) + ".csv"
-val_acc_f_name = log_dir + '/PPO_' + env_name + "_valacc_" + str(run_num) + ".csv"
-print("--------------------------------------------------------------------------------------------")
-print("current logging run number for " + env_name + " : ", run_num)
-print("logging at : " + train_log_f_name)
-#####################################################
-
-directory = "PPO_preTrained"
-if not os.path.exists(directory):
-    os.makedirs(directory, exist_ok=True)
-
-directory = directory + '/' + env_name + '/'
-if not os.path.exists(directory):
-    os.makedirs(directory, exist_ok=True)
-
-checkpoint_path = directory + "PPO_{}_{}_{}.pth".format(env_name, random_seed, run_num)
-best_path = directory + "PPO_{}_{}_{}_best.pth".format(env_name, random_seed, run_num)
-print("save checkpoint path : " + checkpoint_path)
-#####################################################
-
-############# print all hyperparameters #############
-print("max timesteps per episode : ", max_ep_len)
-print("train_test_num : ", train_test_num)
-print("train_num_nodes : ", train_num_nodes)
-print("validate_test_num : ", validate_test_num)
-print("validate_num_nodes : ", validate_num_nodes)
-print("radius : ", radius)
-print("update_timestep : " + str(update_timestep) + " timesteps")
-print("validate_episode_num : " + str(validate_episode_num) + " timesteps")
-print("PPO K epochs : ", K_epochs)
-print("update batch size : ", batch_size)
-print("optimizer learning rate actor : ", lr_actor)
-print("optimizer learning rate actor : ", lr_critic)
-print("max training timesteps : ", max_training_timesteps)
-print("dis of one step : ", dis)
-print("done thresh of one episode : ", done_thresh)
-print("max thread num : ", max_thread_num)
-
-if random_seed:
-    print("setting random seed to ", random_seed)
-    torch.manual_seed(random_seed)
-    np.random.seed(random_seed)
-    random.seed(random_seed)
-print("--------------------------------------------------------------------------------------------")
-
-if has_continuous_action_space:
-    print("Initializing a continuous action space policy")
-    print("starting std of action distribution : ", action_std)
-    print("decay rate of std of action distribution : ", action_std_decay_rate)
-    print("minimum std of action distribution : ", min_action_std)
-    print("decay frequency of std of action distribution : " + str(action_std_decay_freq) + " timesteps")
+# captured paths
+args.dataset_dir = args.server_path + "wyx/ppo/datasets" + str(args.run_num) + "/"
+if os.path.exists(args.dataset_dir) is False:
+    os.makedirs(args.dataset_dir, exist_ok=True)
 else:
-    print("Initializing a discrete action space policy")
+    del_file(args.dataset_dir)
+    os.makedirs(args.dataset_dir, exist_ok=True)
 
-print("PPO epsilon clip : ", eps_clip)
-print("discount factor (gamma) : ", gamma)
-print("optimizer learning rate critic : ", lr_critic)
-#####################################################
+# sampled starting and end points
+train_points = get_start_end(test_num=args.train_test_num, num_nodes=args.train_num_nodes, radius=args.radius)
+validate_points = get_start_end(test_num=args.validate_test_num, num_nodes=args.validate_num_nodes, radius=args.radius)
+print("train_points" + str(len(train_points)))
+
+# log results
+if not os.path.exists(args.log_dir):
+    os.makedirs(args.log_dir, exist_ok=True)
+args.log_dir = args.log_dir + '/' + env_name
+if not os.path.exists(args.log_dir):
+    os.makedirs(args.log_dir, exist_ok=True)
+
+train_log_f_name = args.log_dir + '/PPO_' + env_name + "_trainlog_" + str(args.run_num) + ".csv"
+train_diff_f_name = args.log_dir + '/PPO_' + env_name + "_traindiff_" + str(args.run_num) + ".csv"
+train_acc_f_name = args.log_dir + '/PPO_' + env_name + "_trainacc_" + str(args.run_num) + ".csv"
+val_log_f_name = args.log_dir + '/PPO_' + env_name + "_vallog_" + str(args.run_num) + ".csv"
+val_diff_f_name = args.log_dir + '/PPO_' + env_name + "_valdiff_" + str(args.run_num) + ".csv"
+val_acc_f_name = args.log_dir + '/PPO_' + env_name + "_valacc_" + str(args.run_num) + ".csv"
+print("logging at : " + train_log_f_name)
+
+# logging file
+train_log_f = open(train_log_f_name, "w+")
+train_log_f.write('episode,timestep,reward\n')
+train_diff_f = open(train_diff_f_name, "w+")
+train_diff_f.write('episode,timestep,diff,ideal_diff,noisy_diff\n')
+train_acc_f = open(train_acc_f_name, "w+")
+train_acc_f.write('episode,timestep,acc,ideal_acc,noisy_acc,spl\n')
+
+val_log_f = open(val_log_f_name, "w+")
+val_log_f.write('episode,timestep,reward\n')
+val_diff_f = open(val_diff_f_name, "w+")
+val_diff_f.write('episode,timestep,diff,ideal_diff,noisy_diff\n')
+val_acc_f = open(val_acc_f_name, "w+")
+val_acc_f.write('episode,timestep,acc,ideal_acc,noisy_acc,spl\n')
+
+# save checkpoints
+if not os.path.exists(args.save_dir):
+    os.makedirs(args.save_dir, exist_ok=True)
+args.save_dir = args.save_dir + '/' + env_name + '/'
+if not os.path.exists(args.save_dir):
+    os.makedirs(args.save_dir, exist_ok=True)
+
+checkpoint_path = args.save_dir + "PPO_{}_{}_{}.pth".format(env_name, args.random_seed, args.run_num)
+acc_best_path = args.save_dir + "PPO_{}_{}_{}_acc_best.pth".format(env_name, args.random_seed, args.run_num)
+diff_best_path = args.save_dir + "PPO_{}_{}_{}_diff_best.pth".format(env_name, args.random_seed, args.run_num)
+spl_best_path = args.save_dir + "PPO_{}_{}_{}_spl_best.pth".format(env_name, args.random_seed, args.run_num)
+print("save checkpoint path : " + checkpoint_path)
+
+if args.random_seed:
+    print("setting random seed to ", args.random_seed)
+    torch.manual_seed(args.random_seed)
+    np.random.seed(args.random_seed)
+    random.seed(args.random_seed)
+print("--------------------------------------------------------------------------------------------")
 
 torch.autograd.set_detect_anomaly(True)
 # reduce CPU usage, use it after the model is loaded onto the GPU
 torch.set_num_threads(1)
 cudnn.benchmark = True
 
-################# training procedure ################
-
-# logging file
-train_log_f = open(train_log_f_name, "w+")
-train_log_f.write('episode,timestep,reward\n')
-# logging file
-train_diff_f = open(train_diff_f_name, "w+")
-train_diff_f.write('episode,timestep,diff,ideal_diff,noisy_diff\n')
-# logging file
-train_acc_f = open(train_acc_f_name, "w+")
-train_acc_f.write('episode,timestep,acc,ideal_acc,noisy_acc\n')
-
-# logging file
-val_log_f = open(val_log_f_name, "w+")
-val_log_f.write('episode,timestep,reward\n')
-# logging file
-val_diff_f = open(val_diff_f_name, "w+")
-val_diff_f.write('episode,timestep,diff,ideal_diff,noisy_diff\n')
-# logging file
-val_acc_f = open(val_acc_f_name, "w+")
-val_acc_f.write('episode,timestep,acc,ideal_acc,noisy_acc\n')
-
 # initialize a PPO agent
-ppo_agent = PPO(lr_actor, lr_critic, batch_size, gamma, K_epochs,
-                eps_clip, has_continuous_action_space, action_std)
+ppo_agent = PPO(args.lr_actor, args.lr_critic, args.batch_size, args.gamma, args.K_epochs,
+                args.eps_clip, has_continuous_action_space, args.action_std,
+                args.num_experts, args.noisy_gating, args.k)
+# ppo_agent = MultiExpertPPO([6, 7, 8, 9, 10], True,
+#                            args.lr_actor, args.lr_critic, args.batch_size, args.gamma, args.K_epochs,
+#                            args.eps_clip, has_continuous_action_space, args.action_std)
 time_step = 0
 ideal_total_success_num = 0
 ideal_total_success_diff = 0
 noisy_total_success_num = 0
 noisy_total_success_diff = 0
+train_spl = 0
 print_running_reward = 0
 i_episode = 0
 
@@ -562,6 +549,7 @@ ideal_validate_total_success_num = 0
 ideal_validate_total_success_diff = 0
 noisy_validate_total_success_num = 0
 noisy_validate_total_success_diff = 0
+validate_spl = 0
 validate_print_running_reward = 0
 validate_i_episode = 0
 
@@ -572,24 +560,13 @@ variance_lock = threading.Lock()
 validate_time_step_lock = threading.Lock()
 validate_variance_lock = threading.Lock()
 
-dataset_dir = data + "xxx/ppo/datasets" + str(run_num) + "/"
-if os.path.exists(dataset_dir) is False:
-    os.makedirs(dataset_dir, exist_ok=True)
-else:
-    del_file(dataset_dir)
-    os.makedirs(dataset_dir, exist_ok=True)
-
-train_points = get_start_end(test_num=train_test_num, num_nodes=train_num_nodes, radius=radius)
-validate_points = get_start_end(test_num=validate_test_num, num_nodes=validate_num_nodes, radius=radius)
-
-paths, path_labels = get_big_map(path=bigmap_dir)
-
 print("============================================================================================")
 start_time = datetime.now().replace(microsecond=0)
 print("Started training at (GMT) : ", start_time)
 print("============================================================================================")
 
 train()
+# test_multi_expert()
 
 train_log_f.close()
 train_diff_f.close()
